@@ -1,0 +1,33 @@
+{
+  "name": "lorebot",
+  "version": "0.1.0",
+  "description": "Your team's lore, on demand. A Slack bot that answers questions from your markdown knowledge base, powered by OpenCode.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saiqulhaq/lorebot"
+  },
+  "keywords": [
+    "slack",
+    "bot",
+    "knowledge-base",
+    "ai",
+    "opencode",
+    "q&a"
+  ],
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/client": "next",
+    "@slack/bolt": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
