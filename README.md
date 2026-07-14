@@ -18,6 +18,7 @@ Mention `@lorebot` in a channel, ask a question, get an answer sourced from your
 
 ## Features
 
+- **Config-first customization** — personality, permissions, and answer style all live in `lorebot.config.json`, hot-reloaded on save; no code changes needed
 - **Grounded answers** — the agent greps/reads your actual docs before answering, and cites sources as file paths (optionally linked to GitHub)
 - **Honest** — says "not covered" instead of hallucinating when the KB has no answer
 - **Threaded conversations** — each Slack thread maps to a persistent OpenCode session, so follow-ups keep context (even across bot restarts)
@@ -92,14 +93,34 @@ Logged events: boot sequence, questions received/answered (with latency and Slac
 2026-07-14T10:02:29.117Z INFO  [slack] question answered channel=C0BGGEJQCPR thread=1783962520.436239 session=ses_8f2 durationMs=17637 chars=512
 ```
 
-## Customizing the agent
+## Customizing without code — `lorebot.config.json`
 
-The bundled agent lives at [`agent/kb.md`](agent/kb.md) — a system prompt plus a deny-by-default permission ruleset. Two ways to customize:
+Everything about *how the bot behaves* lives in [`lorebot.config.json`](lorebot.config.json) at the repo root. **Edit it and save — lorebot reloads it automatically within a second** (changes are logged with a field-by-field diff). No restart, no TypeScript.
 
-- Edit `agent/kb.md` in your lorebot checkout (reinstalled into the KB clone on every boot), or
-- Set `KB_MANAGE_AGENT=false` and commit your own `.opencode/agents/kb.md` to the knowledge-base repo itself.
+| Field | What it does |
+|---|---|
+| `agent.name` | The bot's name, used in its system prompt |
+| `agent.personality` | Free-text personality (tone, language behavior) |
+| `agent.systemPromptExtra` | Extra standing instructions appended to the prompt |
+| `agent.steps` | Max agent search steps per answer (bounds cost/latency) |
+| `answers.citeSources` | `false` drops the "Sources:" requirement |
+| `answers.signOff` | Line appended to every answer (e.g. `— lorebot`) |
+| `answers.notCoveredMessage` | Custom text when the KB has no answer |
+| `permissions.allowedUsers` | If non-empty, only these Slack user IDs get answers |
+| `permissions.blockedUsers` | These user IDs are silently ignored |
+| `permissions.allowedChannels` | If non-empty, mentions outside these channel IDs are ignored |
+| `permissions.sensitiveKeywords` | Questions containing any of these get a polite refusal instead of an answer |
+| `permissions.refusalMessage` | The refusal text for sensitive topics |
+| `features.threadFollowUps` | `false` = only answer explicit @mentions |
+| `formatting.maxBulletPoints` | Truncate long bullet lists (0 = unlimited) |
+| `formatting.maxAnswerChars` | Cap answer length (≤ Slack's ~4000) |
 
-You can also point `OPENCODE_AGENT` at any other agent your OpenCode config defines. The model is whatever your OpenCode server/agent config specifies — lorebot never pins one.
+Notes:
+- Prompt-affecting fields (`agent.*`, `answers.citeSources`/`notCoveredMessage`) regenerate the agent definition in the KB clone on reload — they apply to **new threads**; existing threads keep the personality their session started with.
+- Permission and formatting fields apply **immediately** to every message.
+- Invalid values are reported in the logs with the exact field path, and the previous value is kept — a typo can't take the bot down.
+
+For deeper changes: set `KB_MANAGE_AGENT=false` and commit your own `.opencode/agents/kb.md` to the knowledge-base repo, or point `OPENCODE_AGENT` at any agent your OpenCode config defines. The model is whatever your OpenCode server/agent config specifies — lorebot never pins one.
 
 ## Deployment
 

@@ -17,8 +17,28 @@ describe("toMrkdwn", () => {
   })
 
   test("linkifies markdown-file citations when linkBase is set", () => {
-    const output = toMrkdwn("Sources: `docs/onboarding.md`", "https://github.com/org/kb/blob/main")
+    const output = toMrkdwn("Sources: `docs/onboarding.md`", { linkBase: "https://github.com/org/kb/blob/main" })
     expect(output).toBe("Sources: <https://github.com/org/kb/blob/main/docs/onboarding.md|docs/onboarding.md>")
+  })
+
+  test("applies maxAnswerChars from formatting config", () => {
+    const output = toMrkdwn("x".repeat(500), { maxAnswerChars: 100 })
+    expect(output.length).toBeLessThan(130)
+    expect(output).toEndWith("_…truncated_")
+  })
+
+  test("truncates bullet lists beyond maxBulletPoints", () => {
+    const input = ["intro", "- one", "- two", "- three", "- four", "outro"].join("\n")
+    const output = toMrkdwn(input, { maxBulletPoints: 2 })
+    expect(output).toContain("- one")
+    expect(output).toContain("- two")
+    expect(output).not.toContain("- three")
+    expect(output).toContain("_…and 2 more_")
+    expect(output).toContain("outro")
+  })
+
+  test("appends signOff as a final line", () => {
+    expect(toMrkdwn("answer", { signOff: "— lorebot" })).toBe("answer\n\n— lorebot")
   })
 
   test("keeps citations as inline code without linkBase", () => {

@@ -1,15 +1,17 @@
 import fs from "node:fs"
 import path from "node:path"
+import { type BotConfig, buildAgentMarkdown } from "./botconfig"
 import type { Config } from "./config"
 import type { Logger } from "./logger"
 
 const AGENT_SOURCE_DIR = path.join(import.meta.dir, "..", "agent")
 
 /**
- * Ensure the knowledge-base clone exists and (optionally) install the bundled
- * read-only agent into it. Returns the absolute path sessions should use.
+ * Ensure the knowledge-base clone exists and (optionally) install the
+ * config-generated read-only agent into it. Returns the absolute path
+ * sessions should use.
  */
-export async function setupKb(config: Config, log: Logger): Promise<string> {
+export async function setupKb(config: Config, botConfig: BotConfig, log: Logger): Promise<string> {
   const kbDir = config.kbDirOverride ?? path.join(config.dataDir, "kb")
 
   if (config.kbDirOverride) {
@@ -23,7 +25,7 @@ export async function setupKb(config: Config, log: Logger): Promise<string> {
   }
 
   if (config.manageAgent) {
-    installAgent(kbDir)
+    installAgent(kbDir, botConfig)
     log.debug("agent installed into KB clone", { dir: kbDir })
   }
   return path.resolve(kbDir)
@@ -51,16 +53,16 @@ export function startSyncLoop(kbDir: string, intervalMs: number, log: Logger): (
 }
 
 /**
- * Copy the bundled agent definition into the clone's .opencode/ so OpenCode
- * discovers it from the session directory, and keep the clone's git status
- * clean via .git/info/exclude.
+ * Write the config-generated agent definition into the clone's .opencode/ so
+ * OpenCode discovers it from the session directory, and keep the clone's git
+ * status clean via .git/info/exclude. Called on boot and on config reload.
  */
-function installAgent(kbDir: string): void {
+export function installAgent(kbDir: string, botConfig: BotConfig): void {
   const agentsDir = path.join(kbDir, ".opencode", "agents")
   fs.mkdirSync(agentsDir, { recursive: true })
 
-  // The bot's copy is the source of truth; overwrite on every boot.
-  fs.copyFileSync(path.join(AGENT_SOURCE_DIR, "kb.md"), path.join(agentsDir, "kb.md"))
+  // Generated from lorebot.config.json; overwritten on every boot and reload.
+  fs.writeFileSync(path.join(agentsDir, "kb.md"), buildAgentMarkdown(botConfig))
 
   // Don't clobber a config the KB repo already ships.
   const configTarget = path.join(kbDir, ".opencode", "opencode.jsonc")

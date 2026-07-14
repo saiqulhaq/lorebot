@@ -1,0 +1,27 @@
+{
+  "agent": {
+    "name": "lorebot",
+    "personality": "Friendly and concise. Answers in the same language as the question.",
+    "systemPromptExtra": "",
+    "steps": 12
+  },
+  "answers": {
+    "citeSources": true,
+    "signOff": "",
+    "notCoveredMessage": ""
+  },
+  "permissions": {
+    "allowedUsers": [],
+    "blockedUsers": [],
+    "allowedChannels": [],
+    "sensitiveKeywords": [],
+    "refusalMessage": "Sorry, I can't help with that topic here — please reach out to the right team directly."
+  },
+  "features": {
+    "threadFollowUps": true
+  },
+  "formatting": {
+    "maxBulletPoints": 0,
+    "maxAnswerChars": 3900
+  }
+}

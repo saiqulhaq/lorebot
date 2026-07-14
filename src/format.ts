@@ -1,10 +1,22 @@
 const SLACK_TEXT_LIMIT = 3900
 
+export type FormatOptions = {
+  linkBase?: string
+  /** Hard cap on outgoing characters; clamped to Slack's ~4000 limit. */
+  maxAnswerChars?: number
+  /** Truncate bullet lists longer than this; 0 disables. */
+  maxBulletPoints?: number
+  /** Appended as a final line when set. */
+  signOff?: string
+}
+
 /**
- * Convert common markdown to Slack mrkdwn. Handles the subset a Q&A agent
- * actually produces: bold, links, headings, and code (passed through).
+ * Convert common markdown to Slack mrkdwn and apply the answer policy from
+ * lorebot.config.json. Handles the subset a Q&A agent actually produces:
+ * bold, links, headings, and code (passed through).
  */
-export function toMrkdwn(markdown: string, linkBase?: string): string {
+export function toMrkdwn(markdown: string, options: FormatOptions = {}): string {
+  const { linkBase } = options
   const segments = splitByCodeFences(markdown)
   const converted = segments
     .map((segment) => {
@@ -26,7 +38,31 @@ export function toMrkdwn(markdown: string, linkBase?: string): string {
       return text
     })
     .join("")
-  return truncate(converted, SLACK_TEXT_LIMIT)
+
+  let result = converted
+  if (options.maxBulletPoints && options.maxBulletPoints > 0) {
+    result = truncateBullets(result, options.maxBulletPoints)
+  }
+  if (options.signOff) {
+    result = `${result.trimEnd()}\n\n${options.signOff}`
+  }
+  const limit = Math.min(options.maxAnswerChars || SLACK_TEXT_LIMIT, SLACK_TEXT_LIMIT)
+  return truncate(result, limit)
+}
+
+function truncateBullets(text: string, maxBullets: number): string {
+  const lines = text.split("\n")
+  let bullets = 0
+  const kept: string[] = []
+  for (const line of lines) {
+    if (/^\s*[-*•]\s+/.test(line)) {
+      bullets += 1
+      if (bullets > maxBullets) continue
+    }
+    kept.push(line)
+  }
+  if (bullets > maxBullets) kept.push(`_…and ${bullets - maxBullets} more_`)
+  return kept.join("\n")
 }
 
 /** Rewrite backticked relative markdown paths to Slack links: `docs/x.md` -> <base/docs/x.md|docs/x.md> */
