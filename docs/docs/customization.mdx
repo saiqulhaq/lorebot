@@ -31,6 +31,10 @@ Everything about *how the bot behaves* lives in `lorebot.config.json` at the rep
   "formatting": {
     "maxBulletPoints": 0,
     "maxAnswerChars": 3900
+  },
+  "graphify": {
+    "enabled": true,
+    "outputDir": "graphify-out"
   }
 }
 ```
@@ -77,10 +81,19 @@ These fields **generate the agent definition** installed into your KB clone's `.
 | `formatting.maxBulletPoints` | Truncate long bullet lists (`0` = unlimited) |
 | `formatting.maxAnswerChars` | Cap answer length (≤ Slack's ~4000 char limit) |
 
+## Knowledge graph
+
+| Field | What it does |
+|---|---|
+| `graphify.enabled` | `false` skips knowledge-graph detection entirely |
+| `graphify.outputDir` | KB-relative directory holding [Graphify](https://graphify.net) output |
+
+If your KB ships a Graphify graph, lorebot indexes it for the agent automatically — see [Knowledge graph (Graphify)](/docs/graphify).
+
 ## Reload semantics
 
 - **Immediate**: permission and formatting fields apply to the very next message.
-- **New threads**: prompt-affecting fields (`agent.*`, `answers.citeSources`, `answers.notCoveredMessage`) regenerate the agent definition — they apply to new threads; existing threads keep the personality their session started with.
+- **New threads**: prompt-affecting fields (`agent.*`, `answers.citeSources`, `answers.notCoveredMessage`, `graphify.*`) regenerate the agent definition — they apply to new threads; existing threads keep the personality their session started with.
 - **Safe**: invalid values are reported in the logs with the exact field path and the previous value is kept. Unknown section names are flagged (typo protection). A broken config can't take the bot down.
 
 ## Going deeper

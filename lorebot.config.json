@@ -23,5 +23,9 @@
   "formatting": {
     "maxBulletPoints": 0,
     "maxAnswerChars": 3900
+  },
+  "graphify": {
+    "enabled": true,
+    "outputDir": "graphify-out"
   }
 }

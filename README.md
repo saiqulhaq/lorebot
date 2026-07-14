@@ -23,6 +23,7 @@ Mention `@lorebot` in a channel, ask a question, get an answer sourced from your
 - **Honest** — says "not covered" instead of hallucinating when the KB has no answer
 - **Threaded conversations** — each Slack thread maps to a persistent OpenCode session, so follow-ups keep context (even across bot restarts)
 - **Read-only by design** — the bundled agent can only `read`/`glob`/`grep`; it cannot edit files or run shell commands
+- **Knowledge-graph aware** — if the KB ships a [Graphify](https://graphify.net) `graphify-out/` directory, lorebot distills it into an entity index so the agent can navigate relationships, not just grep
 - **Fresh content** — pulls the KB repo on an interval (default 5 min)
 - **Zero Slack infrastructure** — Socket Mode, no public URL needed
 
@@ -114,9 +115,11 @@ Everything about *how the bot behaves* lives in [`lorebot.config.json`](lorebot.
 | `features.threadFollowUps` | `false` = only answer explicit @mentions |
 | `formatting.maxBulletPoints` | Truncate long bullet lists (0 = unlimited) |
 | `formatting.maxAnswerChars` | Cap answer length (≤ Slack's ~4000) |
+| `graphify.enabled` | `false` skips [Graphify](https://graphify.net) graph detection (default on; a no-op when the KB has no graph) |
+| `graphify.outputDir` | KB-relative directory holding Graphify output (default `graphify-out`) |
 
 Notes:
-- Prompt-affecting fields (`agent.*`, `answers.citeSources`/`notCoveredMessage`) regenerate the agent definition in the KB clone on reload — they apply to **new threads**; existing threads keep the personality their session started with.
+- Prompt-affecting fields (`agent.*`, `answers.citeSources`/`notCoveredMessage`, `graphify.*`) regenerate the agent definition in the KB clone on reload — they apply to **new threads**; existing threads keep the personality their session started with.
 - Permission and formatting fields apply **immediately** to every message.
 - Invalid values are reported in the logs with the exact field path, and the previous value is kept — a typo can't take the bot down.
 

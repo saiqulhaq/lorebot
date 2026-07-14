@@ -1,5 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
+import type { GraphifyConfig } from "./graphify"
 import type { Logger } from "./logger"
 
 /**
@@ -34,6 +35,7 @@ export type BotConfig = {
     maxBulletPoints: number
     maxAnswerChars: number
   }
+  graphify: GraphifyConfig
 }
 
 export const BOT_CONFIG_FILE = "lorebot.config.json"
@@ -56,6 +58,7 @@ export const DEFAULT_BOT_CONFIG: BotConfig = Object.freeze({
   },
   features: { threadFollowUps: true },
   formatting: { maxBulletPoints: 0, maxAnswerChars: 3900 },
+  graphify: { enabled: true, outputDir: "graphify-out" },
 })
 
 /**
@@ -102,8 +105,17 @@ export function validateBotConfig(raw: unknown): { config: BotConfig; problems: 
     }
     return value
   }
+  // The value is joined onto the KB clone path, so keep it inside the clone.
+  const dirName = (pathName: string, value: unknown, fallback: string): string => {
+    if (value === undefined) return fallback
+    if (typeof value !== "string" || value.trim() === "" || value.includes("..") || path.isAbsolute(value)) {
+      problems.push(`${pathName} must be a relative directory name inside the knowledge base`)
+      return fallback
+    }
+    return value
+  }
 
-  const knownSections = ["agent", "answers", "permissions", "features", "formatting"]
+  const knownSections = ["agent", "answers", "permissions", "features", "formatting", "graphify"]
   for (const key of Object.keys(root)) {
     if (!knownSections.includes(key)) problems.push(`unknown section "${key}" (known: ${knownSections.join(", ")})`)
   }
@@ -113,6 +125,7 @@ export function validateBotConfig(raw: unknown): { config: BotConfig; problems: 
   const permissions = root.permissions ?? {}
   const features = root.features ?? {}
   const formatting = root.formatting ?? {}
+  const graphify = root.graphify ?? {}
   const d = DEFAULT_BOT_CONFIG
 
   const config: BotConfig = {
@@ -140,6 +153,10 @@ export function validateBotConfig(raw: unknown): { config: BotConfig; problems: 
     formatting: {
       maxBulletPoints: int("formatting.maxBulletPoints", formatting.maxBulletPoints, d.formatting.maxBulletPoints),
       maxAnswerChars: int("formatting.maxAnswerChars", formatting.maxAnswerChars, d.formatting.maxAnswerChars),
+    },
+    graphify: {
+      enabled: bool("graphify.enabled", graphify.enabled, d.graphify.enabled),
+      outputDir: dirName("graphify.outputDir", graphify.outputDir, d.graphify.outputDir),
     },
   }
 
@@ -182,8 +199,10 @@ export function diffBotConfigs(before: BotConfig, after: BotConfig): string[] {
 /**
  * Generate the read-only kb agent definition from the behavior config.
  * This is what gets installed into the KB clone's .opencode/agents/kb.md.
+ * `graphifyPrompt` (from buildGraphifyPrompt) is appended when the KB ships a
+ * knowledge graph, so the agent knows to navigate it.
  */
-export function buildAgentMarkdown(config: BotConfig): string {
+export function buildAgentMarkdown(config: BotConfig, graphifyPrompt = ""): string {
   const rules = [
     "- Search the knowledge base (grep/glob, then read the relevant files) before\n  answering. Never answer from general knowledge alone.",
   ]
@@ -235,7 +254,7 @@ Personality: ${config.agent.personality}
 Rules:
 
 ${rules.join("\n")}
-${config.agent.systemPromptExtra ? `\n${config.agent.systemPromptExtra}\n` : ""}`
+${graphifyPrompt ? `\n${graphifyPrompt}\n` : ""}${config.agent.systemPromptExtra ? `\n${config.agent.systemPromptExtra}\n` : ""}`
 }
 
 /** Case-insensitive check of a question against the sensitive keyword list. */

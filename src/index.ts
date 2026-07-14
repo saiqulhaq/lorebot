@@ -27,7 +27,8 @@ async function main() {
   for (const problem of loaded.problems) log.warn("config problem", { problem })
   const botConfig: BotConfigRef = { current: loaded.config }
 
-  const kbDir = await setupKb(config, botConfig.current, log.child("kb"))
+  const kbLog = log.child("kb")
+  const kbDir = await setupKb(config, botConfig.current, kbLog)
   log.info("knowledge base ready", { dir: kbDir })
 
   const engine = makeEngine(config, kbDir, log.child("engine"))
@@ -39,11 +40,15 @@ async function main() {
     const changes = diffBotConfigs(botConfig.current, reloaded.config)
     if (changes.length === 0) return
     botConfig.current = reloaded.config
-    if (config.manageAgent) installAgent(kbDir, reloaded.config)
+    if (config.manageAgent) installAgent(kbDir, reloaded.config, kbLog)
     log.info("config reloaded", { changes })
   })
 
-  const stopSync = startSyncLoop(kbDir, config.syncIntervalMs, log.child("kb"))
+  // Pulls may update the graphify output; installAgent regenerates the graph
+  // index (a no-op while the graphify manifest is unchanged).
+  const stopSync = startSyncLoop(kbDir, config.syncIntervalMs, kbLog, () => {
+    if (config.manageAgent) installAgent(kbDir, botConfig.current, kbLog)
+  })
   if (config.syncIntervalMs > 0) {
     log.info("KB sync enabled", { intervalSeconds: config.syncIntervalMs / 1000 })
   }

@@ -1,0 +1,119 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "built_at_commit": "0123abcd4567ef890123abcd4567ef890123abcd",
+  "nodes": [
+    {
+      "label": "deploy.md",
+      "file_type": "document",
+      "source_file": "deploy.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "kb_deploy",
+      "community": 0,
+      "norm_label": "deploy.md"
+    },
+    {
+      "label": "Rollback Procedure",
+      "file_type": "document",
+      "source_file": "deploy.md",
+      "source_location": "L20",
+      "_origin": "ast",
+      "id": "kb_deploy_rollback_procedure",
+      "community": 0,
+      "norm_label": "rollback procedure"
+    },
+    {
+      "label": "onboarding.md",
+      "file_type": "document",
+      "source_file": "onboarding.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "kb_onboarding",
+      "community": 1,
+      "norm_label": "onboarding.md"
+    },
+    {
+      "label": "CI Pipeline",
+      "file_type": "concept",
+      "source_file": "deploy.md",
+      "source_location": "L8",
+      "id": "kb_deploy_ci_pipeline",
+      "community": 0,
+      "norm_label": "ci pipeline"
+    },
+    {
+      "label": "VPN Access",
+      "file_type": "concept",
+      "source_file": "onboarding.md",
+      "source_location": "L12",
+      "id": "kb_onboarding_vpn_access",
+      "community": 1,
+      "norm_label": "vpn access"
+    },
+    {
+      "label": "Trunk-Based Development",
+      "file_type": "rationale",
+      "source_file": "faq.md",
+      "source_location": "L30",
+      "id": "kb_faq_trunk_based_development",
+      "community": 0,
+      "norm_label": "trunk-based development",
+      "rationale": "Small PRs keep deploys reversible."
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "deploy.md",
+      "source_location": "L20",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "kb_deploy",
+      "target": "kb_deploy_rollback_procedure"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "onboarding.md",
+      "source_location": "L40",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "kb_onboarding",
+      "target": "kb_deploy_ci_pipeline"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "source_file": "faq.md",
+      "source_location": "L30",
+      "weight": 1.0,
+      "confidence_score": 0.85,
+      "source": "kb_deploy_ci_pipeline",
+      "target": "kb_faq_trunk_based_development"
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "onboarding.md",
+      "source_location": "L12",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "kb_onboarding_vpn_access",
+      "target": "kb_deploy"
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "deployment_flow",
+      "label": "Deployment Flow",
+      "nodes": ["kb_deploy_ci_pipeline", "kb_deploy_rollback_procedure", "kb_faq_trunk_based_development"],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "deploy.md"
+    }
+  ]
+}

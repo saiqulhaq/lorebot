@@ -35,7 +35,16 @@ One sqlite table (`bun:sqlite`, zero deps): `(channel, thread_ts) → session_id
 
 ## `src/kb.ts` — knowledge base management
 
-Clones the KB repo (or uses `KB_DIR`), runs the interval `git pull --ff-only` loop, and installs the generated agent into `<kb>/.opencode/agents/kb.md` — kept out of the clone's git status via `.git/info/exclude`.
+Clones the KB repo (or uses `KB_DIR`), runs the interval `git pull --ff-only` loop, and installs the generated agent into `<kb>/.opencode/agents/kb.md` — kept out of the clone's git status via `.git/info/exclude`. After each successful pull it re-runs the install, which refreshes the graphify index when the graph changed.
+
+## `src/graphify.ts` — knowledge graph index
+
+[Graphify](https://graphify.net) integration. When the KB ships a `graphify-out/` directory:
+
+- `parseGraph` — defensive parse of graphify's NetworkX node-link `graph.json` (nodes, links, hyperedges)
+- `buildIndexMarkdown` — distills the graph into a compact `<kb>/.opencode/graphify-index.md` (topic groups + most-connected entities with related files), capped and never silently truncated
+- `buildGraphifyPrompt` — the extra prompt section `buildAgentMarkdown` appends so the agent knows how to navigate the graph
+- `installGraphifyIndex` — detect/regenerate; skips work via a `manifest.json` content hash embedded in the index; graceful no-op when disabled or absent
 
 ## `src/format.ts` — Slack formatting
 

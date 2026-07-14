@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { type BotConfig, buildAgentMarkdown } from "./botconfig"
 import type { Config } from "./config"
+import { buildGraphifyPrompt, installGraphifyIndex } from "./graphify"
 import type { Logger } from "./logger"
 
 const AGENT_SOURCE_DIR = path.join(import.meta.dir, "..", "agent")
@@ -25,14 +26,18 @@ export async function setupKb(config: Config, botConfig: BotConfig, log: Logger)
   }
 
   if (config.manageAgent) {
-    installAgent(kbDir, botConfig)
+    installAgent(kbDir, botConfig, log)
     log.debug("agent installed into KB clone", { dir: kbDir })
   }
   return path.resolve(kbDir)
 }
 
-/** Start the interval `git pull` loop. Returns a stop function. */
-export function startSyncLoop(kbDir: string, intervalMs: number, log: Logger): () => void {
+/**
+ * Start the interval `git pull` loop. Returns a stop function. `onSynced`
+ * runs after each successful pull (lorebot uses it to refresh the generated
+ * agent and graphify index when the pull changed them).
+ */
+export function startSyncLoop(kbDir: string, intervalMs: number, log: Logger, onSynced?: () => void): () => void {
   if (intervalMs <= 0) return () => {}
   let inFlight = false
   const timer = setInterval(async () => {
@@ -42,6 +47,7 @@ export function startSyncLoop(kbDir: string, intervalMs: number, log: Logger): (
     try {
       await git(["-C", kbDir, "pull", "--ff-only"])
       log.debug("KB synced", { durationMs: Date.now() - startedAt })
+      onSynced?.()
     } catch (error) {
       log.warn("KB sync failed", { error })
     } finally {
@@ -53,16 +59,22 @@ export function startSyncLoop(kbDir: string, intervalMs: number, log: Logger): (
 }
 
 /**
- * Write the config-generated agent definition into the clone's .opencode/ so
- * OpenCode discovers it from the session directory, and keep the clone's git
- * status clean via .git/info/exclude. Called on boot and on config reload.
+ * Write the config-generated agent definition (and, when the KB ships a
+ * graphify graph, the derived graph index) into the clone's .opencode/ so
+ * OpenCode discovers them from the session directory, and keep the clone's
+ * git status clean via .git/info/exclude. Called on boot, on config reload,
+ * and after each KB pull.
  */
-export function installAgent(kbDir: string, botConfig: BotConfig): void {
+export function installAgent(kbDir: string, botConfig: BotConfig, log?: Logger): void {
   const agentsDir = path.join(kbDir, ".opencode", "agents")
   fs.mkdirSync(agentsDir, { recursive: true })
 
+  // The graph index only regenerates when the graphify manifest changed.
+  const hasGraph = installGraphifyIndex(kbDir, botConfig.graphify, log)
+
   // Generated from lorebot.config.json; overwritten on every boot and reload.
-  fs.writeFileSync(path.join(agentsDir, "kb.md"), buildAgentMarkdown(botConfig))
+  const graphifyPrompt = hasGraph ? buildGraphifyPrompt(botConfig.graphify.outputDir) : ""
+  fs.writeFileSync(path.join(agentsDir, "kb.md"), buildAgentMarkdown(botConfig, graphifyPrompt))
 
   // Don't clobber a config the KB repo already ships.
   const configTarget = path.join(kbDir, ".opencode", "opencode.jsonc")

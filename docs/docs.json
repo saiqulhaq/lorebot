@@ -28,7 +28,7 @@
           },
           {
             "group": "Reference",
-            "pages": ["docs/configuration", "docs/customization", "docs/logging"]
+            "pages": ["docs/configuration", "docs/customization", "docs/graphify", "docs/logging"]
           },
           {
             "group": "Operations",

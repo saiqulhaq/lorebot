@@ -1,0 +1,41 @@
+---
+title: "Knowledge graph (Graphify)"
+description: "Let the agent navigate entity relationships instead of relying on grep alone."
+---
+
+[Graphify](https://graphify.net) is an open-source skill that builds a queryable knowledge graph from code, docs, papers, and diagrams. If your knowledge-base repo ships a Graphify output directory (created by running `graphify .` in the KB), lorebot detects it automatically and teaches its read-only agent to navigate the graph — no setup required.
+
+## What lorebot does with it
+
+On boot, config reload, and after every KB pull, lorebot looks for `<kb>/graphify-out/` (the directory name is configurable). When `graph.json` is present it:
+
+1. **Distills the graph into an agent-friendly index** at `<kb>/.opencode/graphify-index.md`: the most-connected entities with their source documents and related entities/files, plus Graphify's topic groups (hyperedges). Like the generated agent, it's kept out of the clone's git status via `.git/info/exclude`.
+2. **Extends the agent prompt** with a section explaining how to use the index, `GRAPH_REPORT.md`, and `graph.json` for relationship questions ("what connects X to Y?", "what depends on X?") — and that the graph only says *where* to look: the agent still reads and cites the underlying documents.
+
+When the directory is absent (or the section is disabled), nothing changes — the agent behaves exactly as before.
+
+## Configuration
+
+The `graphify` section of [`lorebot.config.json`](/docs/customization):
+
+```json
+{
+  "graphify": {
+    "enabled": true,
+    "outputDir": "graphify-out"
+  }
+}
+```
+
+| Field | What it does |
+|---|---|
+| `graphify.enabled` | `false` skips graph detection and removes a previously generated index |
+| `graphify.outputDir` | KB-relative directory holding Graphify output (must stay inside the clone) |
+
+## Staying fresh
+
+Regenerating your graph is your side of the deal — run `graphify update .` (or install Graphify's git hooks) in the KB repo and commit the output. lorebot's side is automatic:
+
+- Every successful `git pull` re-checks the graph; the index is rebuilt only when Graphify's `manifest.json` (a content-hash listing of every ingested file) changed, and the rebuild is logged with node/entity counts.
+- Real graphs reach tens of thousands of nodes, so the index is capped (150 entities, 6 relations each, 40 topic groups). Truncation is never silent: the caps appear in the log line and the index itself points to `GRAPH_REPORT.md` and `graph.json` for everything beyond them.
+- A corrupt or unparseable `graph.json` is reported as a warning and skipped — it can't take the bot down.
