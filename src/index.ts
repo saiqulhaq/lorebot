@@ -2,6 +2,7 @@ import path from "node:path"
 import { ConfigError, loadConfig } from "./config"
 import { makeEngine } from "./engine"
 import { setupKb, startSyncLoop } from "./kb"
+import { makeLogger } from "./logger"
 import { makeSlackApp } from "./slack"
 import { SessionStore } from "./store"
 
@@ -18,23 +19,25 @@ async function main() {
     throw error
   }
 
-  const kbDir = await setupKb(config)
-  console.log(`Knowledge base: ${kbDir}`)
+  const log = makeLogger({ level: config.logLevel, format: config.logFormat })
 
-  const engine = makeEngine(config, kbDir)
+  const kbDir = await setupKb(config, log.child("kb"))
+  log.info("knowledge base ready", { dir: kbDir })
+
+  const engine = makeEngine(config, kbDir, log.child("engine"))
   await engine.healthCheck()
-  console.log(`OpenCode server: ${config.opencodeUrl} ✓`)
+  log.info("opencode server reachable", { url: config.opencodeUrl })
 
-  const stopSync = startSyncLoop(kbDir, config.syncIntervalMs)
+  const stopSync = startSyncLoop(kbDir, config.syncIntervalMs, log.child("kb"))
   if (config.syncIntervalMs > 0) {
-    console.log(`KB sync: git pull every ${config.syncIntervalMs / 1000}s`)
+    log.info("KB sync enabled", { intervalSeconds: config.syncIntervalMs / 1000 })
   }
 
   const store = new SessionStore(path.join(config.dataDir, "lorebot.db"))
-  const app = await makeSlackApp(config, store, engine)
+  const app = await makeSlackApp(config, store, engine, log.child("slack"))
 
   const shutdown = async () => {
-    console.log("Shutting down...")
+    log.info("shutting down")
     stopSync()
     await app.stop().catch(() => {})
     store.close()
@@ -44,7 +47,7 @@ async function main() {
   process.on("SIGTERM", shutdown)
 
   await app.start()
-  console.log("⚡ lorebot is running — mention it in Slack to ask a question")
+  log.info("lorebot is running — mention it in Slack to ask a question")
 }
 
 main().catch((error) => {

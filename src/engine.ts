@@ -6,6 +6,7 @@ import {
   type SessionMessageInfo,
 } from "@opencode-ai/client"
 import type { Config } from "./config"
+import type { Logger } from "./logger"
 
 /** Thrown when the server no longer knows the session; caller should retry with a fresh one. */
 export class SessionGone extends Error {
@@ -24,7 +25,7 @@ export class AnswerTimeout extends Error {
 
 export type Engine = ReturnType<typeof makeEngine>
 
-export function makeEngine(config: Config, kbDir: string) {
+export function makeEngine(config: Config, kbDir: string, log: Logger) {
   const client = OpenCode.make({
     baseUrl: config.opencodeUrl,
     headers: config.opencodePassword
@@ -57,6 +58,7 @@ export function makeEngine(config: Config, kbDir: string) {
       agent: config.agent,
       location: { directory: kbDir },
     })
+    log.info("session created", { session: session.id, agent: config.agent })
     return session.id
   }
 
@@ -88,6 +90,7 @@ export function makeEngine(config: Config, kbDir: string) {
     } catch (error) {
       if (isSessionNotFoundError(error)) throw new SessionGone(sessionID)
       if (isSessionBusyError(error) || isConflictError(error)) {
+        log.debug("session busy, queueing prompt", { session: sessionID })
         await client.session.prompt({ sessionID, text, delivery: "queue" })
         return
       }

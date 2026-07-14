@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import type { Config } from "./config"
+import type { Logger } from "./logger"
 
 const AGENT_SOURCE_DIR = path.join(import.meta.dir, "..", "agent")
 
@@ -8,7 +9,7 @@ const AGENT_SOURCE_DIR = path.join(import.meta.dir, "..", "agent")
  * Ensure the knowledge-base clone exists and (optionally) install the bundled
  * read-only agent into it. Returns the absolute path sessions should use.
  */
-export async function setupKb(config: Config): Promise<string> {
+export async function setupKb(config: Config, log: Logger): Promise<string> {
   const kbDir = config.kbDirOverride ?? path.join(config.dataDir, "kb")
 
   if (config.kbDirOverride) {
@@ -17,25 +18,30 @@ export async function setupKb(config: Config): Promise<string> {
     }
   } else if (!fs.existsSync(path.join(kbDir, ".git"))) {
     fs.mkdirSync(config.dataDir, { recursive: true })
-    console.log(`Cloning knowledge base into ${kbDir} ...`)
+    log.info("cloning knowledge base", { url: config.kbRepoUrl, dir: kbDir })
     await git(["clone", config.kbRepoUrl!, kbDir])
   }
 
-  if (config.manageAgent) installAgent(kbDir)
+  if (config.manageAgent) {
+    installAgent(kbDir)
+    log.debug("agent installed into KB clone", { dir: kbDir })
+  }
   return path.resolve(kbDir)
 }
 
 /** Start the interval `git pull` loop. Returns a stop function. */
-export function startSyncLoop(kbDir: string, intervalMs: number): () => void {
+export function startSyncLoop(kbDir: string, intervalMs: number, log: Logger): () => void {
   if (intervalMs <= 0) return () => {}
   let inFlight = false
   const timer = setInterval(async () => {
     if (inFlight) return
     inFlight = true
+    const startedAt = Date.now()
     try {
       await git(["-C", kbDir, "pull", "--ff-only"])
+      log.debug("KB synced", { durationMs: Date.now() - startedAt })
     } catch (error) {
-      console.error(`KB sync failed: ${error instanceof Error ? error.message : error}`)
+      log.warn("KB sync failed", { error })
     } finally {
       inFlight = false
     }

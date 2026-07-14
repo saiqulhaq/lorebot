@@ -2,9 +2,15 @@ import bolt from "@slack/bolt"
 import type { Config } from "./config"
 import { AnswerTimeout, SessionGone, type Engine } from "./engine"
 import { toMrkdwn } from "./format"
+import type { Logger } from "./logger"
 import type { SessionStore, ThreadKey } from "./store"
 
-export async function makeSlackApp(config: Config, store: SessionStore, engine: Engine): Promise<bolt.App> {
+export async function makeSlackApp(
+  config: Config,
+  store: SessionStore,
+  engine: Engine,
+  log: Logger,
+): Promise<bolt.App> {
   const app = new bolt.App({
     token: config.botToken,
     appToken: config.appToken,
@@ -20,7 +26,7 @@ export async function makeSlackApp(config: Config, store: SessionStore, engine: 
     const threadTs = event.thread_ts ?? event.ts
     const text = event.text.replaceAll(mention, "").trim()
     if (!text) return
-    await answer({ channel: event.channel, threadTs }, text)
+    await answer({ channel: event.channel, threadTs }, text, event.user)
   })
 
   app.message(async ({ message }) => {
@@ -31,11 +37,18 @@ export async function makeSlackApp(config: Config, store: SessionStore, engine: 
     if (message.text.includes(mention)) return // app_mention handles it
     const key = { channel: message.channel, threadTs }
     if (!store.has(key)) return // not a thread the bot owns
-    await answer(key, message.text.trim())
+    await answer(key, message.text.trim(), "user" in message ? message.user : undefined)
   })
 
-  async function answer(key: ThreadKey, question: string): Promise<void> {
-    if (config.logLevel === "debug") console.log(`[${key.channel}/${key.threadTs}] Q: ${question}`)
+  async function answer(key: ThreadKey, question: string, user?: string): Promise<void> {
+    const startedAt = Date.now()
+    log.info("question received", {
+      channel: key.channel,
+      thread: key.threadTs,
+      user,
+      chars: question.length,
+    })
+    log.debug("question text", { question })
 
     const placeholder = await app.client.chat.postMessage({
       channel: key.channel,
@@ -59,6 +72,7 @@ export async function makeSlackApp(config: Config, store: SessionStore, engine: 
         } catch (error) {
           if (!(error instanceof SessionGone)) throw error
           // Server lost the session (deleted, db reset): start fresh once.
+          log.warn("session gone, recreating", { channel: key.channel, thread: key.threadTs })
           store.delete(key)
           const fresh = await engine.createSession()
           store.set(key, fresh)
@@ -66,8 +80,20 @@ export async function makeSlackApp(config: Config, store: SessionStore, engine: 
         }
       })
       await respond(toMrkdwn(text, config.linkBase))
+      log.info("question answered", {
+        channel: key.channel,
+        thread: key.threadTs,
+        session: store.get(key),
+        durationMs: Date.now() - startedAt,
+        chars: text.length,
+      })
     } catch (error) {
-      console.error(`Failed to answer in ${key.channel}/${key.threadTs}:`, error)
+      log.error("failed to answer", {
+        channel: key.channel,
+        thread: key.threadTs,
+        durationMs: Date.now() - startedAt,
+        error,
+      })
       const friendly =
         error instanceof AnswerTimeout
           ? "Sorry, that took too long to answer — please try asking again."

@@ -16,6 +16,7 @@ describe("loadConfig", () => {
     expect(config.answerTimeoutMs).toBe(300_000)
     expect(config.manageAgent).toBe(true)
     expect(config.logLevel).toBe("info")
+    expect(config.logFormat).toBe("pretty")
   })
 
   test("collects all missing required vars in one error", () => {
@@ -54,5 +55,15 @@ describe("loadConfig", () => {
 
   test("rejects unknown log levels", () => {
     expect(() => loadConfig({ ...valid, LOG_LEVEL: "verbose" })).toThrow(ConfigError)
+  })
+
+  test("accepts warn and error log levels", () => {
+    expect(loadConfig({ ...valid, LOG_LEVEL: "warn" }).logLevel).toBe("warn")
+    expect(loadConfig({ ...valid, LOG_LEVEL: "error" }).logLevel).toBe("error")
+  })
+
+  test("accepts json log format and rejects unknown ones", () => {
+    expect(loadConfig({ ...valid, LOG_FORMAT: "json" }).logFormat).toBe("json")
+    expect(() => loadConfig({ ...valid, LOG_FORMAT: "xml" })).toThrow(ConfigError)
   })
 })

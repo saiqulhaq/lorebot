@@ -1,4 +1,5 @@
 import path from "node:path"
+import { LOG_FORMATS, LOG_LEVELS, type LogFormat, type LogLevel } from "./logger"
 
 export type Config = {
   botToken: string
@@ -13,7 +14,8 @@ export type Config = {
   linkBase?: string
   answerTimeoutMs: number
   dataDir: string
-  logLevel: "info" | "debug"
+  logLevel: LogLevel
+  logFormat: LogFormat
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -44,7 +46,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!kbRepoUrl && !kbDirOverride) errors.push("one of KB_REPO_URL or KB_DIR is required")
 
   const logLevel = env.LOG_LEVEL?.trim() || "info"
-  if (logLevel !== "info" && logLevel !== "debug") errors.push(`LOG_LEVEL must be "info" or "debug", got "${logLevel}"`)
+  if (!(LOG_LEVELS as readonly string[]).includes(logLevel)) {
+    errors.push(`LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}, got "${logLevel}"`)
+  }
+
+  const logFormat = env.LOG_FORMAT?.trim() || "pretty"
+  if (!(LOG_FORMATS as readonly string[]).includes(logFormat)) {
+    errors.push(`LOG_FORMAT must be one of ${LOG_FORMATS.join(", ")}, got "${logFormat}"`)
+  }
 
   const config: Config = {
     botToken,
@@ -59,7 +68,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     linkBase: env.KB_LINK_BASE?.trim() || undefined,
     answerTimeoutMs: integer("ANSWER_TIMEOUT_SECONDS", 300) * 1000,
     dataDir: path.resolve(env.DATA_DIR?.trim() || "./data"),
-    logLevel: logLevel === "debug" ? "debug" : "info",
+    logLevel: logLevel as LogLevel,
+    logFormat: logFormat as LogFormat,
   }
 
   if (errors.length > 0) {

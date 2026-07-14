@@ -78,7 +78,19 @@ On boot, lorebot clones your KB (or uses `KB_DIR`), installs its read-only `kb` 
 | `KB_LINK_BASE` | no | — | Linkify citations, e.g. `https://github.com/org/kb/blob/main/` |
 | `ANSWER_TIMEOUT_SECONDS` | no | `300` | Give up waiting for an answer after this |
 | `DATA_DIR` | no | `./data` | Sqlite session store + default clone location |
-| `LOG_LEVEL` | no | `info` | `debug` logs every question |
+| `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error` |
+| `LOG_FORMAT` | no | `pretty` | `pretty` for humans, `json` for log pipelines |
+
+## Logging
+
+Structured logs go to stdout. `pretty` (default) is for humans; `LOG_FORMAT=json` emits one JSON object per line for log pipelines (systemd, Docker, Loki, CloudWatch).
+
+Logged events: boot sequence, questions received/answered (with latency and Slack thread coordinates), session lifecycle, KB sync results, and errors. **Question and answer text is only logged at `debug` level** — at `info`, only character counts appear, so day-to-day logs don't retain your team's Q&A content.
+
+```
+2026-07-14T10:02:11.480Z INFO  [slack] question received channel=C0BGGEJQCPR thread=1783962520.436239 user=U7RKXAHGC chars=37
+2026-07-14T10:02:29.117Z INFO  [slack] question answered channel=C0BGGEJQCPR thread=1783962520.436239 session=ses_8f2 durationMs=17637 chars=512
+```
 
 ## Customizing the agent
 
