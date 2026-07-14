@@ -1,6 +1,6 @@
 {
   "name": "lorebot",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Your team's lore, on demand. A Slack bot that answers questions from your markdown knowledge base, powered by OpenCode.",
   "type": "module",
   "license": "MIT",
