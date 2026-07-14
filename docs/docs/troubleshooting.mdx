@@ -1,0 +1,54 @@
+---
+title: "Troubleshooting"
+description: "Common issues and how to diagnose them."
+---
+
+## The bot connects but never answers
+
+The classic symptom of **missing event subscriptions**. The Socket Mode connection succeeds, but Slack only delivers events the app subscribed to. Go to your app's **Event Subscriptions** page, enable events, and add `app_mention`, `message.channels`, `message.groups`. No reinstall needed if scopes were already granted.
+
+Also check, in order:
+
+1. Is the bot invited to the channel? (`/invite @yourbot`)
+2. Is a channel allowlist active in `lorebot.config.json` (`permissions.allowedChannels`) that excludes this channel?
+3. Is the user blocked or outside an active `allowedUsers` allowlist? (These are silently ignored by design — check debug logs.)
+
+## Cannot reach OpenCode
+
+```sh
+curl http://localhost:4096/api/health
+# or: opencode2 api get /api/health
+```
+
+If the health check fails, start the server with `opencode2 serve`. If it returns a 401, `OPENCODE_SERVER_PASSWORD` doesn't match the server's.
+
+## Answers aren't grounded / no citations
+
+Check that the agent installed into the KB clone:
+
+```sh
+cat <kb-clone>/.opencode/agents/kb.md
+```
+
+If you manage the agent yourself (`KB_MANAGE_AGENT=false`), make sure your committed agent file exists and `answers.citeSources` guidance is part of its prompt.
+
+## Bot doesn't answer thread replies
+
+- It only follows up in threads **it already answered in** (tracked in `$DATA_DIR/lorebot.db`); new questions need an @mention.
+- `features.threadFollowUps` may be `false` in `lorebot.config.json`.
+
+## Config edits seem ignored
+
+Watch the logs — every reload logs a diff, and invalid values are reported with their exact field path (the previous value is kept). A JSON syntax error is reported as a parse problem while the bot keeps running on the old config.
+
+## Slack API errors
+
+| Error | Fix |
+|---|---|
+| `not_in_channel` | Invite the bot: `/invite @yourbot` |
+| `missing_scope` | Add the scope named in the error at api.slack.com → OAuth & Permissions, reinstall the app |
+| `invalid_auth` | `SLACK_BOT_TOKEN` is wrong or revoked |
+
+## Where to look
+
+Run with `LOG_LEVEL=debug` to see every event decision, including silently-ignored messages (permission gates) and full question/answer text.

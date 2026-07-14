@@ -1,0 +1,43 @@
+---
+title: "Configuration (env vars)"
+description: "Environment variables — connection settings and secrets."
+---
+
+Environment variables cover *connections and secrets*. Behavior customization lives in [lorebot.config.json](/docs/customization) instead.
+
+Copy `.env.example` to `.env` and fill in the blanks. Bun loads `.env` natively.
+
+## Required
+
+| Variable | Description |
+|---|---|
+| `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) from OAuth & Permissions |
+| `SLACK_APP_TOKEN` | App-level token (`xapp-…`) with `connections:write`, for Socket Mode |
+| `KB_REPO_URL` *or* `KB_DIR` | Git URL to clone the knowledge base from, **or** a path to an existing local clone |
+
+## Optional
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENCODE_URL` | `http://localhost:4096` | OpenCode v2 server base URL |
+| `OPENCODE_SERVER_PASSWORD` | — | Basic-auth password if the server requires one |
+| `OPENCODE_AGENT` | `kb` | Agent name used for sessions |
+| `KB_SYNC_INTERVAL_SECONDS` | `300` | `git pull` interval; `0` disables background sync |
+| `KB_MANAGE_AGENT` | `true` | Install the generated agent into the KB clone on boot and config reload |
+| `KB_LINK_BASE` | — | Linkify citations, e.g. `https://github.com/org/kb/blob/main/` |
+| `ANSWER_TIMEOUT_SECONDS` | `300` | Give up waiting for an answer after this |
+| `DATA_DIR` | `./data` | Sqlite session store + default clone location |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+| `LOG_FORMAT` | `pretty` | `pretty` for humans, `json` for log pipelines |
+
+## Validation
+
+All problems are collected and reported together on boot — you fix your `.env` in one pass:
+
+```text
+Invalid configuration:
+  - SLACK_BOT_TOKEN is required
+  - one of KB_REPO_URL or KB_DIR is required
+
+Copy .env.example to .env and fill in the blanks.
+```

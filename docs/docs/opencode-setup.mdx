@@ -1,0 +1,50 @@
+---
+title: "OpenCode Setup"
+description: "Run the OpenCode v2 server that powers lorebot's answers."
+---
+
+lorebot is a thin client — the actual agent engine is an [OpenCode v2](https://opencode.ai) server running on the same machine (or reachable over the network).
+
+## Start the server
+
+```sh
+opencode2 serve
+```
+
+The server listens on `http://localhost:4096` by default. lorebot reads the URL from `OPENCODE_URL`.
+
+## Model provider
+
+lorebot never pins a model — answers use whatever your OpenCode configuration specifies. Configure providers in `~/.config/opencode/opencode.json` and authenticate per the [OpenCode docs](https://opencode.ai/docs). Any provider works: Anthropic, OpenAI-compatible proxies (LiteLLM), local models.
+
+## Password protection
+
+If the server sets a password, give lorebot the same value:
+
+```sh
+# server side
+OPENCODE_SERVER_PASSWORD=secret opencode2 serve
+
+# lorebot side (.env)
+OPENCODE_SERVER_PASSWORD=secret
+```
+
+lorebot authenticates with HTTP Basic auth (`opencode:<password>`).
+
+## How lorebot uses the server
+
+Each Slack thread maps to one OpenCode **session** created with:
+
+- `location.directory` → your knowledge-base clone
+- `agent: "kb"` → the read-only agent lorebot generates from `lorebot.config.json`
+
+The question flow is: `session.prompt` (admit) → `session.wait` (until idle) → `message.list` (read the newest assistant message). Sessions persist server-side, so thread context survives lorebot restarts.
+
+## Verifying
+
+```sh
+curl http://localhost:4096/api/health
+# or with the built-in CLI client:
+opencode2 api get /api/health
+opencode2 api get /api/session | jq '.data[].title'   # inspect the bot's sessions
+```

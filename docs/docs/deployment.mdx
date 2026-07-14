@@ -1,0 +1,47 @@
+---
+title: "Deployment"
+description: "Run lorebot in production with systemd or Docker."
+---
+
+lorebot runs anywhere Bun and OpenCode run. Two processes are involved: the **OpenCode server** (owns model credentials) and **lorebot** (owns Slack tokens).
+
+## systemd (recommended)
+
+```ini
+[Unit]
+Description=lorebot
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/lorebot
+EnvironmentFile=/opt/lorebot/.env
+ExecStart=/usr/local/bin/bun run src/index.ts
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Run the OpenCode server as its own unit (`opencode2 serve`) or rely on its background service management.
+
+## Docker
+
+A `Dockerfile` is included:
+
+```sh
+docker build -t lorebot .
+docker run --env-file .env -v lorebot-data:/data --network host lorebot
+```
+
+<Note>
+  The container needs network access to the OpenCode server, which itself needs
+  your model provider credentials — host-process deployment is usually simpler
+  than containerizing both.
+</Note>
+
+## Operational notes
+
+- **State**: `$DATA_DIR` holds the sqlite thread↔session map and (by default) the KB clone. Persist it across restarts — thread context is preserved server-side by OpenCode, but the mapping lives here.
+- **Restarts are cheap**: on boot lorebot re-reads config, reinstalls the agent, checks the OpenCode server health, and reconnects to Slack. Mid-conversation threads keep their context.
+- **KB freshness**: the clone is `git pull --ff-only`'d every `KB_SYNC_INTERVAL_SECONDS` (default 5 min). Pull failures are logged and never crash the bot.
+- **Log pipelines**: set `LOG_FORMAT=json` and ship stdout wherever you aggregate logs.

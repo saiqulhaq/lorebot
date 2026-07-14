@@ -1,0 +1,88 @@
+---
+title: "Customization (lorebot.config.json)"
+description: "Personality, permissions, and answer style — no code required."
+---
+
+Everything about *how the bot behaves* lives in `lorebot.config.json` at the repo root. **Edit it and save — lorebot reloads it automatically within a second.** Changes are logged with a field-by-field diff. No restart, no TypeScript.
+
+```json
+{
+  "agent": {
+    "name": "lorebot",
+    "personality": "Friendly and concise. Answers in the same language as the question.",
+    "systemPromptExtra": "",
+    "steps": 12
+  },
+  "answers": {
+    "citeSources": true,
+    "signOff": "",
+    "notCoveredMessage": ""
+  },
+  "permissions": {
+    "allowedUsers": [],
+    "blockedUsers": [],
+    "allowedChannels": [],
+    "sensitiveKeywords": [],
+    "refusalMessage": "Sorry, I can't help with that topic here — please reach out to the right team directly."
+  },
+  "features": {
+    "threadFollowUps": true
+  },
+  "formatting": {
+    "maxBulletPoints": 0,
+    "maxAnswerChars": 3900
+  }
+}
+```
+
+## Agent
+
+| Field | What it does |
+|---|---|
+| `agent.name` | The bot's name, used in its system prompt |
+| `agent.personality` | Free-text personality: tone, language behavior, style |
+| `agent.systemPromptExtra` | Extra standing instructions appended to the prompt |
+| `agent.steps` | Max agent search steps per answer — bounds cost and latency |
+
+These fields **generate the agent definition** installed into your KB clone's `.opencode/agents/kb.md`. The generated agent always keeps a deny-by-default, read-only permission ruleset regardless of config.
+
+## Answers
+
+| Field | What it does |
+|---|---|
+| `answers.citeSources` | `false` drops the "Sources:" requirement |
+| `answers.signOff` | Line appended to every answer, e.g. `— lorebot` |
+| `answers.notCoveredMessage` | Custom text when the KB has no answer |
+
+## Permissions
+
+| Field | What it does |
+|---|---|
+| `permissions.allowedUsers` | If non-empty, only these Slack user IDs get answers |
+| `permissions.blockedUsers` | These user IDs are silently ignored |
+| `permissions.allowedChannels` | If non-empty, mentions outside these channel IDs are ignored |
+| `permissions.sensitiveKeywords` | Questions containing any of these get a polite refusal — the KB is never consulted |
+| `permissions.refusalMessage` | The refusal text |
+
+<Tip>
+  Find a Slack user's ID via their profile → ⋮ → *Copy member ID*. Channel IDs
+  are in the channel's *About* tab, or in the URL (`C0…`).
+</Tip>
+
+## Features & formatting
+
+| Field | What it does |
+|---|---|
+| `features.threadFollowUps` | `false` = only answer explicit @mentions |
+| `formatting.maxBulletPoints` | Truncate long bullet lists (`0` = unlimited) |
+| `formatting.maxAnswerChars` | Cap answer length (≤ Slack's ~4000 char limit) |
+
+## Reload semantics
+
+- **Immediate**: permission and formatting fields apply to the very next message.
+- **New threads**: prompt-affecting fields (`agent.*`, `answers.citeSources`, `answers.notCoveredMessage`) regenerate the agent definition — they apply to new threads; existing threads keep the personality their session started with.
+- **Safe**: invalid values are reported in the logs with the exact field path and the previous value is kept. Unknown section names are flagged (typo protection). A broken config can't take the bot down.
+
+## Going deeper
+
+If JSON isn't enough: set `KB_MANAGE_AGENT=false` and commit your own `.opencode/agents/kb.md` to the knowledge-base repo, or point `OPENCODE_AGENT` at any agent your OpenCode configuration defines.

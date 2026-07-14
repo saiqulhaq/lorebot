@@ -1,0 +1,50 @@
+---
+title: "Modules"
+description: "What each file in src/ does and how they connect."
+---
+
+## `src/index.ts` — entrypoint
+
+Boot sequence: load env config → load behavior config → set up the KB clone (+ generated agent) → health-check the OpenCode server → start the config watcher and KB sync loop → open the session store → connect to Slack. Handles SIGINT/SIGTERM cleanup.
+
+## `src/config.ts` — env config
+
+Parses and validates environment variables (connections and secrets). Collects **all** problems into one `ConfigError` so users fix `.env` in a single pass.
+
+## `src/botconfig.ts` — behavior config
+
+Everything for `lorebot.config.json`:
+
+- `validateBotConfig` — one-pass validation with per-field problems; unknown sections flagged
+- `buildAgentMarkdown` — generates the read-only kb agent definition from config
+- `diffBotConfigs` — field-by-field diff for reload logging
+- `watchBotConfig` — debounced `fs.watch` hot reload; parse failures keep the previous config
+- `matchSensitiveKeyword` — case-insensitive refusal matching
+
+## `src/slack.ts` — Slack handlers
+
+Two bolt handlers: `app_mention` (new questions) and `message` (thread follow-ups in threads the bot owns). Permission gates (users/channels) silently ignore; sensitive keywords get a configured refusal. The answer flow posts a `_Thinking…_` placeholder and updates it in place — every error path updates the placeholder too, never leaving it dangling.
+
+## `src/engine.ts` — OpenCode client wrapper
+
+The v2 API flow: `session.prompt` (admission; retries with `delivery: "queue"` on busy) → `session.wait` (with timeout via `AbortSignal`) → `message.list` → extract the newest assistant message after the prompt time. A per-thread promise chain serializes rapid questions. `SessionGone` triggers transparent session recreation.
+
+## `src/store.ts` — session store
+
+One sqlite table (`bun:sqlite`, zero deps): `(channel, thread_ts) → session_id`. Because OpenCode persists sessions server-side, restoring this mapping after a restart restores full conversation context.
+
+## `src/kb.ts` — knowledge base management
+
+Clones the KB repo (or uses `KB_DIR`), runs the interval `git pull --ff-only` loop, and installs the generated agent into `<kb>/.opencode/agents/kb.md` — kept out of the clone's git status via `.git/info/exclude`.
+
+## `src/format.ts` — Slack formatting
+
+Markdown → mrkdwn conversion (bold, links, headings; code preserved), citation linkification against `KB_LINK_BASE`, bullet-list truncation, sign-off, and length caps from the formatting config.
+
+## `src/logger.ts` — logging
+
+Zero-dependency structured logger: levels, component tags, pretty or JSON output. See [Logging](/docs/logging).
+
+## Tests
+
+Each module has a matching `test/*.test.ts` (`bun test`, no mocking framework). The engine's answer-extraction logic is tested against hand-written message fixtures.

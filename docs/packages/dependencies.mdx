@@ -1,0 +1,39 @@
+---
+title: "Dependencies"
+description: "The two runtime dependencies and what lorebot builds on."
+---
+
+lorebot has exactly **two runtime dependencies**. Everything else uses Bun built-ins (`bun:sqlite`, native `.env` loading, `Bun.spawn`, `fs.watch`).
+
+## `@opencode-ai/client`
+
+The published TypeScript client for the [OpenCode v2](https://opencode.ai) HTTP API (installed from the `next` tag). lorebot uses a small slice of it:
+
+| API | Used for |
+|---|---|
+| `OpenCode.make({ baseUrl, headers })` | client with optional Basic auth |
+| `client.health.get()` | fail-fast boot check |
+| `client.session.create({ agent, location })` | one session per Slack thread, rooted at the KB clone |
+| `client.session.prompt({ sessionID, text, delivery? })` | admit a question (`delivery: "queue"` when busy) |
+| `client.session.wait({ sessionID })` | block until the agent loop is idle |
+| `client.message.list({ sessionID, order: "desc" })` | read the newest assistant answer |
+| `isSessionBusyError` / `isConflictError` / `isSessionNotFoundError` | typed error discrimination |
+
+<Note>
+  The v2 API is **asynchronous by design**: `prompt()` returns an admission
+  receipt, not the answer. The admit → wait → list pattern is what makes
+  lorebot's placeholder-update UX work.
+</Note>
+
+## `@slack/bolt`
+
+Slack's official framework, used in **Socket Mode** — a WebSocket to Slack instead of a public webhook URL. lorebot uses `app.event("app_mention")`, `app.message()`, and the underlying Web API client for `chat.postMessage` / `chat.update`.
+
+## The OpenCode server (peer, not a dependency)
+
+The agent engine itself — sessions, the model call loop, tool execution (read/glob/grep against the KB), and permission enforcement — is the OpenCode v2 server, a separate process you run with `opencode2 serve`. lorebot deliberately keeps **zero model-provider credentials**; those live in your OpenCode configuration.
+
+## Runtime
+
+- **[Bun](https://bun.sh)** ≥ 1.1 — runs TypeScript directly, provides sqlite, `.env`, and process spawning without additional packages
+- **git** — for the KB clone and interval pulls

@@ -1,0 +1,73 @@
+---
+title: "Quickstart"
+description: "From zero to answering questions in Slack in about 10 minutes."
+---
+
+## Prerequisites
+
+- [Bun](https://bun.sh) ≥ 1.1
+- [OpenCode v2](https://opencode.ai) installed and authenticated with a model provider
+- A git repository of markdown files (your knowledge base)
+- A Slack workspace where you can create apps
+
+## Setup
+
+<Steps>
+  <Step title="Create the Slack app">
+    Follow the [Slack setup guide](/docs/slack-setup) to create a Socket Mode app
+    with the right scopes and events. You'll end up with two tokens:
+    `SLACK_BOT_TOKEN` (`xoxb-…`) and `SLACK_APP_TOKEN` (`xapp-…`).
+  </Step>
+  <Step title="Start the OpenCode server">
+    ```sh
+    opencode2 serve
+    ```
+    This runs on `http://localhost:4096` by default. See
+    [OpenCode setup](/docs/opencode-setup) for password protection and
+    provider configuration.
+  </Step>
+  <Step title="Install and configure lorebot">
+    ```sh
+    git clone https://github.com/saiqulhaq/lorebot && cd lorebot
+    bun install
+    cp .env.example .env   # fill in your tokens and KB repo URL
+    ```
+  </Step>
+  <Step title="Run it">
+    ```sh
+    bun start
+    ```
+    On boot, lorebot clones your KB (or uses `KB_DIR`), installs its read-only
+    agent into the clone, verifies the OpenCode server is reachable, and
+    connects to Slack.
+  </Step>
+  <Step title="Ask a question">
+    Invite the bot to a channel (`/invite @lorebot`), then mention it:
+
+    > @lorebot how do I roll back a production deploy?
+
+    You'll see a *Thinking…* placeholder that updates in place with a grounded,
+    cited answer. Reply in the thread — no mention needed — to follow up.
+  </Step>
+</Steps>
+
+## Try it without a real knowledge base
+
+The repo ships a tiny fixture KB for smoke-testing:
+
+```sh
+KB_DIR=$PWD/fixtures/kb KB_SYNC_INTERVAL_SECONDS=0 bun start
+```
+
+Ask *"how do I rollback a deploy?"* — the answer should cite `deploy.md`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Customize the bot" icon="sliders" href="/docs/customization">
+    Personality, permissions, and formatting via lorebot.config.json.
+  </Card>
+  <Card title="Deploy it" icon="server" href="/docs/deployment">
+    systemd unit and Docker options for production.
+  </Card>
+</CardGroup>

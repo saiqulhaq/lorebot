@@ -1,0 +1,60 @@
+---
+title: "lorebot"
+description: "Your team's lore, on demand — a Slack bot that answers questions from your markdown knowledge base, powered by OpenCode."
+---
+
+## What is lorebot?
+
+lorebot turns your team's markdown knowledge base into a Slack assistant. Mention `@lorebot` in a channel, ask a question, and get an answer **grounded in your actual docs** — with file citations linked to GitHub. Follow up in the thread without mentioning it again.
+
+```text
+┌───────┐     mention/reply      ┌─────────┐   HTTP API    ┌──────────────┐
+│ Slack │ ─────────────────────▶ │ lorebot │ ────────────▶ │ OpenCode v2  │
+│       │ ◀───────────────────── │         │ ◀──────────── │   server     │
+└───────┘    threaded answer     └─────────┘               └──────┬───────┘
+                                      │                           │ read-only agent
+                                      │ git pull (interval)       ▼
+                                      └────────────────────▶ ┌─────────┐
+                                                             │ KB repo │ (markdown)
+                                                             └─────────┘
+```
+
+## Why lorebot?
+
+<CardGroup cols={2}>
+  <Card title="Grounded answers" icon="magnifying-glass">
+    The agent greps and reads your actual docs before answering — no vector
+    database, no embeddings, no indexing pipeline. A git clone is the index.
+  </Card>
+  <Card title="Honest by design" icon="shield-check">
+    Says "not covered" instead of hallucinating when the knowledge base has no
+    answer. Every claim cites its source file.
+  </Card>
+  <Card title="Config-first customization" icon="sliders">
+    Personality, permissions, and answer style live in one JSON file —
+    hot-reloaded on save. No code changes for everyday customization.
+  </Card>
+  <Card title="Threaded conversations" icon="comments">
+    Each Slack thread maps to a persistent OpenCode session, so follow-ups keep
+    context — even across bot restarts.
+  </Card>
+  <Card title="Read-only agent" icon="lock">
+    The bundled agent can only read, glob, and grep. It cannot edit files or
+    run shell commands, enforced by a deny-by-default permission ruleset.
+  </Card>
+  <Card title="Zero Slack infrastructure" icon="plug">
+    Socket Mode means no public URL, no webhook endpoint, no reverse proxy.
+    Runs anywhere Bun runs.
+  </Card>
+</CardGroup>
+
+## How answers work
+
+1. Someone mentions the bot: *"@lorebot how do I roll back a deploy?"*
+2. lorebot maps the Slack thread to an OpenCode session pointed at your KB clone
+3. The read-only agent searches the markdown files, reads the relevant ones, and writes a grounded answer
+4. The "Thinking…" placeholder updates in place with the answer and its sources
+
+<Card title="Get started in 10 minutes" icon="rocket" href="/quickstart">
+  Set up the Slack app, start the OpenCode server, and run lorebot.
+</Card>

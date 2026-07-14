@@ -1,0 +1,46 @@
+---
+title: "Slack Setup"
+description: "Create the Slack app lorebot connects through."
+---
+
+lorebot uses **Socket Mode**, so there's no public URL, webhook endpoint, or reverse proxy to manage.
+
+<Steps>
+  <Step title="Create the app">
+    Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → *From scratch*. Pick a name (this becomes the bot's Slack handle) and your workspace.
+  </Step>
+  <Step title="Enable Socket Mode">
+    **Settings → Socket Mode** → toggle on. Create an app-level token with the
+    `connections:write` scope. This is your `SLACK_APP_TOKEN` (`xapp-…`).
+  </Step>
+  <Step title="Add bot token scopes">
+    **OAuth & Permissions → Bot Token Scopes**, add:
+
+    | Scope | Why |
+    |---|---|
+    | `app_mentions:read` | receive @mentions |
+    | `chat:write` | post answers |
+    | `channels:history` | see thread replies in public channels |
+    | `groups:history` | see thread replies in private channels |
+
+    Then **Install to Workspace**. The resulting bot token is your
+    `SLACK_BOT_TOKEN` (`xoxb-…`).
+  </Step>
+  <Step title="Subscribe to events">
+    **Event Subscriptions** → toggle on → under **Subscribe to bot events**, add:
+
+    - `app_mention`
+    - `message.channels`
+    - `message.groups`
+
+    <Warning>
+      This step is easy to miss. Without event subscriptions, the bot connects
+      fine but **never receives anything** — the symptom is total silence.
+      `app_mention` alone is not enough either: thread follow-ups arrive as
+      plain `message` events.
+    </Warning>
+  </Step>
+  <Step title="Invite the bot">
+    In each channel where the bot should answer: `/invite @yourbot`
+  </Step>
+</Steps>

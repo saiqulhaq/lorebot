@@ -1,0 +1,70 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "lorebot",
+  "description": "Your team's lore, on demand. A Slack bot that answers questions from your markdown knowledge base, powered by OpenCode.",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Home",
+        "pages": ["index", "quickstart"]
+      },
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": ["docs/slack-setup", "docs/opencode-setup"]
+          },
+          {
+            "group": "Reference",
+            "pages": ["docs/configuration", "docs/customization", "docs/logging"]
+          },
+          {
+            "group": "Operations",
+            "pages": ["docs/deployment", "docs/troubleshooting"]
+          }
+        ]
+      },
+      {
+        "tab": "Packages",
+        "pages": ["packages/overview", "packages/modules", "packages/dependencies"]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/saiqulhaq/lorebot",
+          "icon": "github"
+        },
+        {
+          "anchor": "OpenCode",
+          "href": "https://opencode.ai",
+          "icon": "terminal"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/saiqulhaq/lorebot"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/saiqulhaq/lorebot"
+    }
+  }
+}

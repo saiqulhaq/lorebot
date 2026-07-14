@@ -1,0 +1,29 @@
+---
+title: "Logging"
+description: "Structured logs with privacy-conscious defaults."
+---
+
+Structured logs go to stdout. Two formats via `LOG_FORMAT`:
+
+- **`pretty`** (default) — human-readable lines for a terminal
+- **`json`** — one JSON object per line, for systemd/Docker/Loki/CloudWatch pipelines
+
+```text
+2026-07-14T10:02:11.480Z INFO  [slack] question received channel=C0BGGEJQCPR thread=1783962520.436239 user=U7RKXAHGC chars=37
+2026-07-14T10:02:29.117Z INFO  [slack] question answered channel=C0BGGEJQCPR thread=1783962520.436239 session=ses_8f2 durationMs=17637 chars=512
+```
+
+## What gets logged
+
+| Component | Events |
+|---|---|
+| `[slack]` | question received / answered / refused, with latency and thread coordinates |
+| `[engine]` | session created, busy-retry queueing |
+| `[kb]` | clone, sync results, agent install |
+| `[config]` | hot reloads with field-by-field diffs, validation problems |
+
+## Privacy default
+
+**Question and answer text only appears at `debug` level.** At `info`, logs contain metadata only — channel, thread, user ID, duration, character counts — so day-to-day logs don't retain your team's Q&A content.
+
+Set the level with `LOG_LEVEL` (`debug` | `info` | `warn` | `error`).

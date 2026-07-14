@@ -1,0 +1,44 @@
+---
+title: "Overview"
+description: "What lorebot is made of — deliberately small."
+---
+
+lorebot is **~7 source files by design**. There's no framework, no plugin system, no build step — Bun runs the TypeScript directly. This page and the next two map the codebase for contributors.
+
+## The three layers
+
+<CardGroup cols={3}>
+  <Card title="Slack layer" icon="slack">
+    `@slack/bolt` in Socket Mode receives mentions and thread replies, posts
+    placeholder → answer updates.
+  </Card>
+  <Card title="Engine layer" icon="gears">
+    `@opencode-ai/client` drives the OpenCode v2 server: create session →
+    prompt → wait → read answer.
+  </Card>
+  <Card title="Knowledge layer" icon="book">
+    A git clone of your markdown docs plus a generated read-only agent that
+    searches it.
+  </Card>
+</CardGroup>
+
+## Repository layout
+
+```text
+lorebot/
+├── src/                  # the bot (see Modules)
+├── lorebot.config.json   # behavior config, hot-reloaded
+├── agent/opencode.jsonc  # default_agent marker installed into the KB clone
+├── fixtures/kb/          # tiny fake KB for local smoke tests
+├── test/                 # bun test suites (one per module)
+├── docs/                 # this documentation site (Mintlify)
+├── .env.example          # connection settings template
+└── Dockerfile
+```
+
+## Design principles
+
+- **Config over code** — anything a non-developer might want to change belongs in `lorebot.config.json`, not TypeScript
+- **Fail closed, degrade gracefully** — permission gates silently ignore rather than error; a broken config reload keeps the previous config; KB sync failures never crash the bot
+- **No hidden state** — thread↔session mapping is one sqlite table; everything else lives server-side in OpenCode or in git
+- **Privacy by default** — Q&A text only reaches logs at `debug` level
