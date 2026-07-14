@@ -1,7 +1,7 @@
 import bolt from "@slack/bolt"
 import { type BotConfig, matchSensitiveKeyword } from "./botconfig"
 import type { Config } from "./config"
-import { AnswerTimeout, SessionGone, type Engine } from "./engine"
+import { AnswerTimeout, NoAnswer, SessionGone, type Engine } from "./engine"
 import { toMrkdwn } from "./format"
 import type { Logger } from "./logger"
 import type { SessionStore, ThreadKey } from "./store"
@@ -143,7 +143,9 @@ export async function makeSlackApp(
       const friendly =
         error instanceof AnswerTimeout
           ? "Sorry, that took too long to answer — please try asking again."
-          : "Sorry, something went wrong while answering. Please try again."
+          : error instanceof NoAnswer
+            ? "I ran out of search steps before I could put an answer together — try a more specific question, or raise `agent.steps` in lorebot.config.json."
+            : "Sorry, something went wrong while answering. Please try again."
       await respond(friendly).catch(() => {})
     }
   }

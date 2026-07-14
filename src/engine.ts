@@ -5,6 +5,7 @@ import {
   isSessionNotFoundError,
   type SessionMessageInfo,
 } from "@opencode-ai/client"
+import path from "node:path"
 import type { Config } from "./config"
 import type { Logger } from "./logger"
 
@@ -20,6 +21,14 @@ export class AnswerTimeout extends Error {
   constructor(ms: number) {
     super(`No answer within ${Math.round(ms / 1000)}s`)
     this.name = "AnswerTimeout"
+  }
+}
+
+/** The agent loop finished without any text output (e.g. steps exhausted mid-search). */
+export class NoAnswer extends Error {
+  constructor() {
+    super("The agent finished without producing a text answer")
+    this.name = "NoAnswer"
   }
 }
 
@@ -64,6 +73,24 @@ export function makeEngine(config: Config, kbDir: string, log: Logger) {
 
   /** Full v2 flow: admit prompt -> wait for idle -> read newest assistant message. */
   async function ask(sessionID: string, text: string): Promise<string> {
+    // Sessions are pinned to the directory they were created with; if the KB
+    // clone moved, execution fails silently. Treat a mismatch as a gone
+    // session so the caller recreates it against the current location.
+    let session
+    try {
+      session = await client.session.get({ sessionID })
+    } catch (error) {
+      if (isSessionNotFoundError(error)) throw new SessionGone(sessionID)
+      throw error
+    }
+    if (path.resolve(session.location.directory) !== path.resolve(kbDir)) {
+      log.warn("session points at a stale KB directory, recreating", {
+        session: sessionID,
+        directory: session.location.directory,
+      })
+      throw new SessionGone(sessionID)
+    }
+
     const promptedAt = Date.now()
     await admit(sessionID, text)
 
@@ -78,9 +105,7 @@ export function makeEngine(config: Config, kbDir: string, log: Logger) {
 
     const messages = await client.message.list({ sessionID, limit: 10, order: "desc" })
     const answer = extractAnswer(messages.data, promptedAt)
-    if (answer === undefined) {
-      throw new Error("The agent finished without producing a text answer")
-    }
+    if (answer === undefined) throw new NoAnswer()
     return answer
   }
 
@@ -103,7 +128,9 @@ export function makeEngine(config: Config, kbDir: string, log: Logger) {
     const previous = queues.get(threadKey) ?? Promise.resolve()
     const next = previous.catch(() => {}).then(work)
     queues.set(threadKey, next)
-    void next.finally(() => {
+    // The caller handles next's rejection; this cleanup chain must swallow it
+    // separately or it becomes an unhandled rejection that kills the process.
+    void next.catch(() => {}).finally(() => {
       if (queues.get(threadKey) === next) queues.delete(threadKey)
     })
     return next
