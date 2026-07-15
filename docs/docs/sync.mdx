@@ -1,0 +1,125 @@
+---
+title: "Graphify Sync"
+description: "Push merged knowledge graphs + PRD copies into every app repo."
+---
+
+Beyond answering in Slack, lorebot can act as a **knowledge sync orchestrator**: it builds a merged [Graphify](https://graphify.net) knowledge graph (your KB's PRD docs + each app's own docs) and pushes it — together with copies of the KB docs — into every configured app repository. Developers' AI coding agents then have the full graph *and* the PRD text available locally, right in the repo they're working on.
+
+```text
+┌────────────────┐  reads PRDs   ┌─────────┐  merged graph + kb-docs  ┌───────────┐
+│ knowledge-base │ ────────────▶ │ lorebot │ ───────────────────────▶ │ app repos │
+│ (source of     │               │  sync   │   (push via GitHub App)  │ app-1..N  │
+│  truth)        │               └─────────┘                          └─────┬─────┘
+└────────────────┘                                                          ▼
+                                                              developer's AI agent
+```
+
+## What gets pushed into each app repo
+
+- **`graphify-out/`** — the merged graph (`graph.json`, `manifest.json`, `GRAPH_REPORT.md`, `BUILD_INFO.json` provenance). Every `source_file` in the graph resolves inside the repo.
+- **`kb-docs/`** — copies of the KB's PRD docs, so graph nodes pointing at KB content are readable locally.
+
+The app's own files are never touched. Commits arrive as `lorebot[bot]` with the message `ci(graphify): rebuild graph from knowledge-base@<sha>`.
+
+## One-time setup
+
+<Steps>
+  <Step title="Create a GitHub App">
+    In your org: Settings → Developer settings → GitHub Apps → New. Permissions:
+    **Contents: Read & write**, Metadata: Read. Add **Pull requests: Read & write**
+    if you plan to use `pushMode: "pr"`. No webhooks needed. Install it on the
+    app repositories you want synced, note the **App ID** and **Installation ID**,
+    and generate a **private key** (.pem).
+  </Step>
+  <Step title="Install graphify + rsync on the host">
+    ```sh
+    uv tool install graphifyy   # or: pipx install graphifyy
+    graphify --version
+    ```
+    `rsync` and `git` must also be on PATH.
+  </Step>
+  <Step title="Configure the environment">
+    ```sh
+    GITHUB_APP_ID=123456
+    GITHUB_APP_INSTALLATION_ID=7890123
+    GITHUB_APP_PRIVATE_KEY_FILE=/etc/lorebot/github-app.pem
+    LITELLM_SERVICE_ACCOUNT_KEY=sk-...   # graph builds call an LLM
+    #LITELLM_BASE_URL=https://litellm.hhstaging.dev/v1
+    #GRAPHIFY_BIN=graphify
+    ```
+  </Step>
+  <Step title="Configure the apps">
+    In `lorebot.config.json`:
+    ```json
+    "sync": {
+      "enabled": false,
+      "apps": [
+        { "name": "hh-server", "repo": "hungryhub-team/hh-server", "docsPaths": ["docs/"] }
+      ],
+      "intervalHours": 24,
+      "pushMode": "direct",
+      "kbPaths": ["src/"],
+      "skipCi": false,
+      "dryRun": true,
+      "buildTimeoutMinutes": 60
+    }
+    ```
+  </Step>
+</Steps>
+
+## Config reference
+
+| Field | Default | What it does |
+|---|---|---|
+| `sync.enabled` | `false` | Gates the in-process scheduler only — `bun run sync` always works |
+| `sync.apps[].name` | — | Slug; becomes `DATA_DIR/sync/apps/<name>` |
+| `sync.apps[].repo` | — | `org/name` on github.com |
+| `sync.apps[].branch` | remote HEAD | Target branch |
+| `sync.apps[].docsPaths` | whole repo | Narrow the corpus to specific paths (e.g. docs-only) |
+| `sync.apps[].excludePaths` | — | Extra rsync excludes on top of the defaults (`.git`, `node_modules`, …) |
+| `sync.intervalHours` | `24` | Scheduler cadence |
+| `sync.pushMode` | `"direct"` | `"pr"` force-pushes `lorebot/graphify-sync` and opens/updates a PR |
+| `sync.kbPaths` | `["src/"]` | Which KB paths are the PRD docs copied into apps |
+| `sync.skipCi` | `false` | Append ` [skip ci]` so sync commits don't trigger the app's CI |
+| `sync.dryRun` | `false` | Build everything, log the would-be diffstat, push nothing |
+| `sync.buildTimeoutMinutes` | `60` | Kill a graphify build that runs longer |
+
+## Running it
+
+```sh
+bun run sync                    # all configured apps
+bun run sync --only hh-server   # subset
+bun run sync --dry-run          # never pushes
+bun run sync --force            # ignore incremental state, full re-extract (costs LLM tokens)
+```
+
+The CLI is independent of the Slack bot — run it from cron if you prefer:
+
+```cron
+0 2 * * * cd /opt/lorebot && /usr/local/bin/bun run sync >> /var/log/lorebot-sync.log 2>&1
+```
+
+Or set `sync.enabled: true` and let the running bot schedule it (`intervalHours`, plus an on-boot run when a build is missing or stale).
+
+## Cost & efficiency
+
+- Builds are **incremental**: graphify's `manifest.json` persists between runs, so only changed files spend LLM tokens. First-ever runs seed incremental state from the app repo's previously committed graph when available.
+- Runs **short-circuit** when neither the KB nor the app changed since the last build — zero LLM spend.
+- A diff that only changes the `BUILD_INFO.json` timestamp is treated as no-change and not pushed.
+- Builds run one at a time (graphify's cache is not concurrency-safe); a cross-process lock protects against the scheduler and CLI colliding.
+
+## Rollout advice
+
+1. Start with **one app**, `dryRun: true`, via `bun run sync --only <app>` — inspect the logged diffstat and `DATA_DIR/sync/apps/<app>/corpus/`
+2. Switch to `pushMode: "pr"` — review the actual PR in the app repo
+3. Go `direct` (+ `skipCi` if the daily commit shouldn't trigger CI), enable the scheduler, add apps one at a time
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `graphify sync disabled` at boot | Missing env vars — the log lists all of them; the Slack role keeps running |
+| `graphify extract failed` | Check `LITELLM_SERVICE_ACCOUNT_KEY` / `LITELLM_BASE_URL`; run `graphify --version` on the host |
+| Build killed at the timeout | Raise `sync.buildTimeoutMinutes` — first full extracts of big corpora are slow |
+| Push rejected | The App isn't installed on that repo, or lacks Contents write |
+| Everything rebuilds after config edits | Changing `kbPaths`/`docsPaths` invalidates the incremental manifest by design — one full re-extract follows |

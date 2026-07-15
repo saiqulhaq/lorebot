@@ -1,0 +1,56 @@
+#!/bin/sh
+# Fake graphify CLI for offline tests. Behavior toggles via env:
+#   GRAPHIFY_FAKE_LOG   append "<mode> <cwd>" lines here
+#   GRAPHIFY_FAKE_FAIL  exit 1 immediately
+#   GRAPHIFY_FAKE_SLEEP sleep N seconds before acting (timeout tests)
+#   GRAPHIFY_FAKE_DUMP_ENV  write LITELLM_*/CI env to this file
+set -e
+
+mode="$1"
+
+[ -n "$GRAPHIFY_FAKE_LOG" ] && echo "$mode $(pwd)" >> "$GRAPHIFY_FAKE_LOG"
+[ -n "$GRAPHIFY_FAKE_DUMP_ENV" ] && printf 'CI=%s\nLITELLM_SERVICE_ACCOUNT_KEY=%s\nLITELLM_BASE_URL=%s\n' \
+  "$CI" "$LITELLM_SERVICE_ACCOUNT_KEY" "$LITELLM_BASE_URL" > "$GRAPHIFY_FAKE_DUMP_ENV"
+[ -n "$GRAPHIFY_FAKE_SLEEP" ] && exec sleep "$GRAPHIFY_FAKE_SLEEP"
+[ -n "$GRAPHIFY_FAKE_FAIL" ] && exit 1
+
+case "$mode" in
+  extract|update)
+    out=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--output" ]; then out="$2"; shift; fi
+      shift
+    done
+    [ -z "$out" ] && exit 2
+    mkdir -p "$out/cache" "$out/converted"
+    cat > "$out/graph.json" <<'EOF'
+{
+  "directed": true,
+  "nodes": [
+    {"id": "app_readme", "label": "App Readme", "file_type": "document", "source_file": "README.md"},
+    {"id": "kb_prd", "label": "KB PRD", "file_type": "document", "source_file": "kb-docs/src/prd.md"}
+  ],
+  "links": [
+    {"source": "app_readme", "target": "kb_prd", "relation": "implements"}
+  ],
+  "hyperedges": []
+}
+EOF
+    echo "{\"README.md\": {\"mtime\": 1, \"ast_hash\": \"$mode\"}}" > "$out/manifest.json"
+    echo '{}' > "$out/.graphify_labels.json"
+    echo junk > "$out/cache/junk"
+    echo junk > "$out/converted/junk"
+    ;;
+  report)
+    out=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--output" ]; then out="$2"; shift; fi
+      shift
+    done
+    echo "# Fake report" > "$out"
+    ;;
+  *)
+    echo "unknown mode: $mode" >&2
+    exit 2
+    ;;
+esac

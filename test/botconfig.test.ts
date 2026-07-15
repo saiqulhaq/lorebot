@@ -40,6 +40,55 @@ describe("validateBotConfig", () => {
   })
 })
 
+describe("local config override", () => {
+  test("deep-merges the local file over the base config", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lorebot-local-"))
+    const base = path.join(dir, "lorebot.config.json")
+    const local = path.join(dir, "lorebot.config.local.json")
+    fs.writeFileSync(base, JSON.stringify({ agent: { name: "public", steps: 5 }, formatting: { maxBulletPoints: 3 } }))
+    fs.writeFileSync(
+      local,
+      JSON.stringify({
+        agent: { name: "company" },
+        sync: { enabled: true, apps: [{ name: "app1", repo: "org/app1" }] },
+      }),
+    )
+
+    const { config, problems } = loadBotConfig(base, local)
+    expect(problems).toEqual([])
+    expect(config.agent.name).toBe("company") // local wins
+    expect(config.agent.steps).toBe(5) // base survives the nested merge
+    expect(config.formatting.maxBulletPoints).toBe(3)
+    expect(config.sync.enabled).toBe(true)
+    expect(config.sync.apps).toHaveLength(1)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("a broken local file is reported but keeps the base config usable", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lorebot-local-"))
+    const base = path.join(dir, "lorebot.config.json")
+    const local = path.join(dir, "lorebot.config.local.json")
+    fs.writeFileSync(base, JSON.stringify({ agent: { name: "public" } }))
+    fs.writeFileSync(local, "{ broken")
+
+    const { config, problems } = loadBotConfig(base, local)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain("cannot parse")
+    expect(config.agent.name).toBe("public")
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("missing local file is a silent no-op", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lorebot-local-"))
+    const base = path.join(dir, "lorebot.config.json")
+    fs.writeFileSync(base, JSON.stringify({ agent: { name: "solo" } }))
+    const { config, problems } = loadBotConfig(base, path.join(dir, "lorebot.config.local.json"))
+    expect(problems).toEqual([])
+    expect(config.agent.name).toBe("solo")
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
 describe("loadBotConfig", () => {
   test("missing file falls back to defaults silently", () => {
     const { config, problems } = loadBotConfig("/nonexistent/lorebot.config.json")
@@ -51,7 +100,7 @@ describe("loadBotConfig", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lorebot-botconfig-"))
     const file = path.join(dir, "lorebot.config.json")
     fs.writeFileSync(file, "{ not json")
-    const { config, problems } = loadBotConfig(file)
+    const { config, problems } = loadBotConfig(file, path.join(dir, "none.local.json"))
     expect(problems).toHaveLength(1)
     expect(problems[0]).toContain("cannot parse")
     expect(config).toEqual(DEFAULT_BOT_CONFIG)
@@ -113,6 +162,62 @@ describe("buildAgentMarkdown", () => {
     const config = structuredClone(DEFAULT_BOT_CONFIG)
     config.agent.systemPromptExtra = "Never mention competitors."
     expect(buildAgentMarkdown(config)).toContain("Never mention competitors.")
+  })
+})
+
+describe("sync section validation", () => {
+  test("defaults: disabled, no apps, daily direct pushes", () => {
+    const { config, problems } = validateBotConfig({})
+    expect(problems).toEqual([])
+    expect(config.sync).toEqual({
+      enabled: false,
+      apps: [],
+      intervalHours: 24,
+      pushMode: "direct",
+      kbPaths: ["src/"],
+      skipCi: false,
+      dryRun: false,
+      buildTimeoutMinutes: 60,
+    })
+  })
+
+  test("accepts a full valid app entry", () => {
+    const { config, problems } = validateBotConfig({
+      sync: {
+        enabled: true,
+        pushMode: "pr",
+        apps: [{ name: "hh-server", repo: "hungryhub-team/hh-server", branch: "main", docsPaths: ["docs/"] }],
+      },
+    })
+    expect(problems).toEqual([])
+    expect(config.sync.apps).toHaveLength(1)
+    expect(config.sync.apps[0]!.docsPaths).toEqual(["docs/"])
+    expect(config.sync.pushMode).toBe("pr")
+  })
+
+  test("rejects bad slugs, bad repos, and duplicates with indexed paths", () => {
+    const { config, problems } = validateBotConfig({
+      sync: {
+        apps: [
+          { name: "OK not", repo: "org/app" },
+          { name: "app", repo: "no-slash" },
+          { name: "dup", repo: "org/a" },
+          { name: "dup", repo: "org/b" },
+        ],
+      },
+    })
+    expect(problems.some((p) => p.startsWith("sync.apps[0].name"))).toBe(true)
+    expect(problems.some((p) => p.startsWith("sync.apps[1].repo"))).toBe(true)
+    expect(problems.some((p) => p.includes('"dup" is duplicated'))).toBe(true)
+    expect(config.sync.apps).toHaveLength(1) // only the first "dup" survives
+  })
+
+  test("rejects unknown pushMode and path escapes", () => {
+    const { problems } = validateBotConfig({
+      sync: { pushMode: "yolo", kbPaths: ["../etc"] },
+    })
+    expect(problems.some((p) => p.includes("sync.pushMode"))).toBe(true)
+    expect(problems.some((p) => p.includes("sync.kbPaths[0]"))).toBe(true)
   })
 })
 

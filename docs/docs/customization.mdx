@@ -90,6 +90,10 @@ These fields **generate the agent definition** installed into your KB clone's `.
 
 If your KB ships a Graphify graph, lorebot indexes it for the agent automatically — see [Knowledge graph (Graphify)](/docs/graphify).
 
+## Local overrides for deployments
+
+`lorebot.config.local.json` (gitignored, next to the base file) deep-merges over `lorebot.config.json`: objects merge recursively, arrays and scalars replace. Put everything company-specific there — personality, permissions, `sync.apps` — so your clone of the public repo stays pristine and upgrades are a plain `git pull`. It participates in hot reload exactly like the base file, including being created while the bot is running.
+
 ## Reload semantics
 
 - **Immediate**: permission and formatting fields apply to the very next message.

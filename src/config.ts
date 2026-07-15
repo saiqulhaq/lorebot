@@ -16,10 +16,20 @@ export type Config = {
   dataDir: string
   logLevel: LogLevel
   logFormat: LogFormat
+  githubAppId?: string
+  githubAppInstallationId?: string
+  githubAppPrivateKeyFile?: string
+  litellmKey?: string
+  litellmBaseUrl: string
+  graphifyBin: string
 }
 
-export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+export function loadConfig(
+  env: Record<string, string | undefined> = process.env,
+  options: { role?: "bot" | "sync" } = {},
+): Config {
   const errors: string[] = []
+  const role = options.role ?? "bot"
 
   const required = (name: string): string => {
     const value = env[name]?.trim()
@@ -38,8 +48,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     return value
   }
 
-  const botToken = required("SLACK_BOT_TOKEN")
-  const appToken = required("SLACK_APP_TOKEN")
+  // The sync CLI runs without Slack; the bot role requires both tokens.
+  const botToken = role === "bot" ? required("SLACK_BOT_TOKEN") : env.SLACK_BOT_TOKEN?.trim() || ""
+  const appToken = role === "bot" ? required("SLACK_APP_TOKEN") : env.SLACK_APP_TOKEN?.trim() || ""
 
   const kbRepoUrl = env.KB_REPO_URL?.trim() || undefined
   const kbDirOverride = env.KB_DIR?.trim() || undefined
@@ -70,6 +81,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dataDir: path.resolve(env.DATA_DIR?.trim() || "./data"),
     logLevel: logLevel as LogLevel,
     logFormat: logFormat as LogFormat,
+    githubAppId: env.GITHUB_APP_ID?.trim() || undefined,
+    githubAppInstallationId: env.GITHUB_APP_INSTALLATION_ID?.trim() || undefined,
+    githubAppPrivateKeyFile: env.GITHUB_APP_PRIVATE_KEY_FILE?.trim() || undefined,
+    litellmKey: env.LITELLM_SERVICE_ACCOUNT_KEY?.trim() || undefined,
+    litellmBaseUrl: env.LITELLM_BASE_URL?.trim() || "https://litellm.hhstaging.dev/v1",
+    graphifyBin: env.GRAPHIFY_BIN?.trim() || "graphify",
   }
 
   if (errors.length > 0) {

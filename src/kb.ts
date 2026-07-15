@@ -7,12 +7,8 @@ import type { Logger } from "./logger"
 
 const AGENT_SOURCE_DIR = path.join(import.meta.dir, "..", "agent")
 
-/**
- * Ensure the knowledge-base clone exists and (optionally) install the
- * config-generated read-only agent into it. Returns the absolute path
- * sessions should use.
- */
-export async function setupKb(config: Config, botConfig: BotConfig, log: Logger): Promise<string> {
+/** Ensure the knowledge-base clone exists (no agent install — sync CLI uses this too). */
+export async function ensureKbClone(config: Config, log: Logger): Promise<string> {
   const kbDir = config.kbDirOverride ?? path.join(config.dataDir, "kb")
 
   if (config.kbDirOverride) {
@@ -24,12 +20,21 @@ export async function setupKb(config: Config, botConfig: BotConfig, log: Logger)
     log.info("cloning knowledge base", { url: config.kbRepoUrl, dir: kbDir })
     await git(["clone", config.kbRepoUrl!, kbDir])
   }
+  return path.resolve(kbDir)
+}
 
+/**
+ * Ensure the knowledge-base clone exists and (optionally) install the
+ * config-generated read-only agent into it. Returns the absolute path
+ * sessions should use.
+ */
+export async function setupKb(config: Config, botConfig: BotConfig, log: Logger): Promise<string> {
+  const kbDir = await ensureKbClone(config, log)
   if (config.manageAgent) {
     installAgent(kbDir, botConfig, log)
     log.debug("agent installed into KB clone", { dir: kbDir })
   }
-  return path.resolve(kbDir)
+  return kbDir
 }
 
 /**

@@ -6,6 +6,8 @@ import { installAgent, setupKb, startSyncLoop } from "./kb"
 import { makeLogger } from "./logger"
 import { type BotConfigRef, makeSlackApp } from "./slack"
 import { SessionStore } from "./store"
+import { requireSyncEnv } from "./sync/env"
+import { startSyncScheduler } from "./sync/orchestrator"
 
 async function main() {
   let config
@@ -35,14 +37,37 @@ async function main() {
   await engine.healthCheck()
   log.info("opencode server reachable", { url: config.opencodeUrl })
 
+  // Graphify sync scheduler (second role). Missing credentials disable the
+  // scheduler with an error log — the Slack role always keeps running.
+  let stopSyncScheduler: (() => void) | undefined
+  const startSync = () => {
+    if (!botConfig.current.sync.enabled) return
+    try {
+      const syncEnv = requireSyncEnv(config)
+      stopSyncScheduler = startSyncScheduler({ config, syncEnv, kbDir, log: log.child("sync") }, botConfig)
+      log.info("graphify sync scheduler started", {
+        apps: botConfig.current.sync.apps.length,
+        intervalHours: botConfig.current.sync.intervalHours,
+      })
+    } catch (error) {
+      log.error("graphify sync disabled", { error })
+    }
+  }
+
   const stopWatch = watchBotConfig(BOT_CONFIG_PATH, log.child("config"), (reloaded) => {
     for (const problem of reloaded.problems) log.warn("config problem", { problem })
     const changes = diffBotConfigs(botConfig.current, reloaded.config)
     if (changes.length === 0) return
     botConfig.current = reloaded.config
     if (config.manageAgent) installAgent(kbDir, reloaded.config, kbLog)
+    if (changes.some((change) => change.startsWith("sync."))) {
+      stopSyncScheduler?.()
+      stopSyncScheduler = undefined
+      startSync()
+    }
     log.info("config reloaded", { changes })
   })
+  startSync()
 
   // Pulls may update the graphify output; installAgent regenerates the graph
   // index (a no-op while the graphify manifest is unchanged).
@@ -58,6 +83,7 @@ async function main() {
 
   const shutdown = async () => {
     log.info("shutting down")
+    stopSyncScheduler?.()
     stopWatch()
     stopSync()
     await app.stop().catch(() => {})

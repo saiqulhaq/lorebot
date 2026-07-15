@@ -39,6 +39,10 @@ docker run --env-file .env -v lorebot-data:/data --network host lorebot
   than containerizing both.
 </Note>
 
+## Graphify sync prerequisites
+
+If you enable the [Graphify sync role](/docs/sync), the host additionally needs `rsync` and the graphify CLI (`uv tool install graphifyy`, requires Python 3.10+). The bundled Dockerfile does **not** include these — run `bun run sync` from a cron job or a separate image if you containerize the bot.
+
 ## Operational notes
 
 - **State**: `$DATA_DIR` holds the sqlite thread↔session map and (by default) the KB clone. Persist it across restarts — thread context is preserved server-side by OpenCode, but the mapping lives here.

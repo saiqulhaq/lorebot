@@ -24,6 +24,7 @@ Mention `@lorebot` in a channel, ask a question, get an answer sourced from your
 - **Threaded conversations** — each Slack thread maps to a persistent OpenCode session, so follow-ups keep context (even across bot restarts)
 - **Read-only by design** — the bundled agent can only `read`/`glob`/`grep`; it cannot edit files or run shell commands
 - **Knowledge-graph aware** — if the KB ships a [Graphify](https://graphify.net) `graphify-out/` directory, lorebot distills it into an entity index so the agent can navigate relationships, not just grep
+- **Graphify sync orchestrator** — optionally builds merged knowledge graphs (KB PRDs + each app's docs) and pushes them, with KB doc copies, into your app repos via a GitHub App — so developers' AI agents get full context locally (`bun run sync`, see the docs)
 - **Fresh content** — pulls the KB repo on an interval (default 5 min)
 - **Zero Slack infrastructure** — Socket Mode, no public URL needed
 
@@ -117,6 +118,15 @@ Everything about *how the bot behaves* lives in [`lorebot.config.json`](lorebot.
 | `formatting.maxAnswerChars` | Cap answer length (≤ Slack's ~4000) |
 | `graphify.enabled` | `false` skips [Graphify](https://graphify.net) graph detection (default on; a no-op when the KB has no graph) |
 | `graphify.outputDir` | KB-relative directory holding Graphify output (default `graphify-out`) |
+
+**Deploying for your company?** Put your deployment-specific values in `lorebot.config.local.json` (gitignored) — it deep-merges over the base config and hot-reloads the same way. Your clone stays clean and `git pull` upgrades never conflict:
+
+```json
+{
+  "agent": { "name": "HubBot", "personality": "..." },
+  "sync": { "enabled": true, "apps": [{ "name": "hh-server", "repo": "your-org/hh-server" }] }
+}
+```
 
 Notes:
 - Prompt-affecting fields (`agent.*`, `answers.citeSources`/`notCoveredMessage`, `graphify.*`) regenerate the agent definition in the KB clone on reload — they apply to **new threads**; existing threads keep the personality their session started with.
