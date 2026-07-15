@@ -5,11 +5,11 @@ import path from "node:path"
 import { makeLogger } from "../../src/logger"
 import {
   assembleCorpus,
-  chooseMode,
   mirrorToAppRepo,
+  prepareForBuild,
   readBuildInfo,
   runGraphify,
-  runGraphifyReport,
+  runGraphifyCluster,
   seedManifestFromAppRepo,
   writeBuildInfo,
 } from "../../src/sync/corpus"
@@ -61,12 +61,15 @@ describe("assembleCorpus", () => {
     expect(fs.existsSync(path.join(corpus, "kb-docs/src/prd.md"))).toBe(true)
     // excluded both directions
     expect(fs.existsSync(path.join(corpus, "node_modules"))).toBe(false)
-    expect(fs.existsSync(path.join(corpus, ".git"))).toBe(false)
+    // corpus/.git is lorebot's own init (real HEAD), not a copy of the app's fixture .git
+    expect(fs.readFileSync(path.join(corpus, ".git/HEAD"), "utf8")).toStartWith("ref:")
     expect(fs.existsSync(path.join(corpus, "kb-docs/stale.md"))).toBe(false)
     expect(fs.existsSync(path.join(corpus, "graphify-out/graph.json"))).toBe(false)
     expect(fs.existsSync(path.join(corpus, "kb-docs/src/.opencode"))).toBe(false)
     // KB paths outside kbPaths stay out
     expect(fs.existsSync(path.join(corpus, "kb-docs/other"))).toBe(false)
+    // corpus is its own git repo so parent .gitignores can't hide it from graphify
+    expect(fs.existsSync(path.join(corpus, ".git"))).toBe(true)
   })
 
   test("propagates deletions but preserves graphify-out", async () => {
@@ -111,6 +114,24 @@ describe("assembleCorpus", () => {
     expect(fs.existsSync(path.join(corpus, "graphify-out/manifest.json"))).toBe(false)
   })
 
+  test("excludePatterns filter both app and KB mirrors", async () => {
+    const { appRepo, kb, corpus } = setupTrees()
+    write(appRepo, "docs/diagram.png")
+    write(kb, "src/screenshot.png")
+    await assembleCorpus({
+      corpusDir: corpus,
+      appRepoDir: appRepo,
+      kbDir: kb,
+      kbPaths: ["src/"],
+      excludePatterns: ["*.png"],
+      log,
+    })
+    expect(fs.existsSync(path.join(corpus, "docs/api.md"))).toBe(true)
+    expect(fs.existsSync(path.join(corpus, "kb-docs/src/prd.md"))).toBe(true)
+    expect(fs.existsSync(path.join(corpus, "docs/diagram.png"))).toBe(false)
+    expect(fs.existsSync(path.join(corpus, "kb-docs/src/screenshot.png"))).toBe(false)
+  })
+
   test("warns and skips missing kbPaths", async () => {
     const { appRepo, kb, corpus } = setupTrees()
     const warnings: string[] = []
@@ -127,16 +148,16 @@ describe("assembleCorpus", () => {
   })
 })
 
-describe("chooseMode / seedManifestFromAppRepo", () => {
-  test("update only when both state files exist; force wipes state", () => {
+describe("prepareForBuild / seedManifestFromAppRepo", () => {
+  test("force wipes graphify incremental state; normal builds keep it", () => {
     const corpus = tempDir()
-    expect(chooseMode(corpus, false)).toBe("extract")
     write(corpus, "graphify-out/manifest.json", "{}")
-    expect(chooseMode(corpus, false)).toBe("extract") // labels missing
-    write(corpus, "graphify-out/.graphify_labels.json", "{}")
-    expect(chooseMode(corpus, false)).toBe("update")
-    expect(chooseMode(corpus, true)).toBe("extract")
+    write(corpus, "graphify-out/cache/entry", "x")
+    prepareForBuild(corpus, false)
+    expect(fs.existsSync(path.join(corpus, "graphify-out/manifest.json"))).toBe(true)
+    prepareForBuild(corpus, true)
     expect(fs.existsSync(path.join(corpus, "graphify-out/manifest.json"))).toBe(false)
+    expect(fs.existsSync(path.join(corpus, "graphify-out/cache"))).toBe(false)
   })
 
   test("seeds incremental state from the app repo's committed graph", () => {
@@ -144,15 +165,13 @@ describe("chooseMode / seedManifestFromAppRepo", () => {
     const corpus = tempDir()
     expect(seedManifestFromAppRepo(appRepo, corpus, log)).toBe(false) // nothing committed
     write(appRepo, "graphify-out/manifest.json", "{}")
-    write(appRepo, "graphify-out/.graphify_labels.json", "{}")
-    expect(seedManifestFromAppRepo(appRepo, corpus, log)).toBe(true)
-    expect(chooseMode(corpus, false)).toBe("update")
+    expect(seedManifestFromAppRepo(appRepo, corpus, log)).toBe(true) // labels are optional
     expect(seedManifestFromAppRepo(appRepo, corpus, log)).toBe(false) // already seeded
   })
 })
 
 describe("runGraphify", () => {
-  test("passes CI + LiteLLM env and produces output", async () => {
+  test("maps openai backend env, passes backend/model args, produces output", async () => {
     const corpus = tempDir()
     const envDump = path.join(tempDir(), "env.txt")
     process.env.GRAPHIFY_FAKE_DUMP_ENV = envDump
@@ -160,9 +179,10 @@ describe("runGraphify", () => {
       await runGraphify({
         bin: FAKE_GRAPHIFY,
         corpusDir: corpus,
-        mode: "extract",
-        litellmKey: "sk-test",
-        litellmBaseUrl: "https://llm.example/v1",
+        backend: "openai",
+        model: "minimax/MiniMax-M2.5",
+        apiKey: "sk-test",
+        baseUrl: "https://llm.example/v1",
         timeoutMs: 10_000,
         log,
       })
@@ -172,8 +192,11 @@ describe("runGraphify", () => {
     expect(fs.existsSync(path.join(corpus, "graphify-out/graph.json"))).toBe(true)
     const env = fs.readFileSync(envDump, "utf8")
     expect(env).toContain("CI=true")
-    expect(env).toContain("LITELLM_SERVICE_ACCOUNT_KEY=sk-test")
-    expect(env).toContain("LITELLM_BASE_URL=https://llm.example/v1")
+    expect(env).toContain("OPENAI_API_KEY=sk-test")
+    expect(env).toContain("OPENAI_BASE_URL=https://llm.example/v1")
+    expect(env).toContain("OPENAI_MODEL=minimax/MiniMax-M2.5")
+    expect(env).toContain("--backend openai")
+    expect(env).toContain("--model minimax/MiniMax-M2.5")
   })
 
   test("kills the build on timeout", async () => {
@@ -184,9 +207,8 @@ describe("runGraphify", () => {
         runGraphify({
           bin: FAKE_GRAPHIFY,
           corpusDir: corpus,
-          mode: "extract",
-          litellmKey: "k",
-          litellmBaseUrl: "u",
+          backend: "openai", apiKey: "k",
+          baseUrl: "u",
           timeoutMs: 300,
           log,
         }),
@@ -204,26 +226,37 @@ describe("runGraphify", () => {
         runGraphify({
           bin: FAKE_GRAPHIFY,
           corpusDir: corpus,
-          mode: "update",
-          litellmKey: "k",
-          litellmBaseUrl: "u",
+          backend: "openai", apiKey: "k",
+          baseUrl: "u",
           timeoutMs: 10_000,
           log,
         }),
-      ).rejects.toThrow("graphify update failed")
+      ).rejects.toThrow("graphify extract failed")
     } finally {
       delete process.env.GRAPHIFY_FAKE_FAIL
     }
   })
 
-  test("report failures are non-fatal", async () => {
+  test("cluster/report failures are non-fatal; success writes the report", async () => {
     const corpus = tempDir()
+    const clusterOptions = {
+      bin: FAKE_GRAPHIFY,
+      corpusDir: corpus,
+      backend: "openai",
+      apiKey: "k",
+      baseUrl: "u",
+      timeoutMs: 10_000,
+      log,
+    }
     process.env.GRAPHIFY_FAKE_FAIL = "1"
     try {
-      await runGraphifyReport(FAKE_GRAPHIFY, corpus, log) // must not throw
+      await runGraphifyCluster(clusterOptions) // must not throw
     } finally {
       delete process.env.GRAPHIFY_FAKE_FAIL
     }
+    await runGraphifyCluster(clusterOptions)
+    expect(fs.existsSync(path.join(corpus, "graphify-out/GRAPH_REPORT.md"))).toBe(true)
+    expect(fs.existsSync(path.join(corpus, "graphify-out/.graphify_labels.json"))).toBe(true)
   })
 })
 
@@ -234,6 +267,7 @@ describe("BUILD_INFO + mirrorToAppRepo", () => {
     write(corpus, "graphify-out/graph.json", "{}")
     write(corpus, "graphify-out/cache/junk")
     write(corpus, "graphify-out/converted/junk")
+    write(corpus, "graphify-out/2026-07-15/backup.json")
     write(corpus, "kb-docs/src/prd.md", "prd")
     write(appRepo, "graphify-out/old-file.json") // must be deleted by --delete
     write(appRepo, "src/app.ts", "code")
@@ -254,6 +288,7 @@ describe("BUILD_INFO + mirrorToAppRepo", () => {
     expect(fs.existsSync(path.join(appRepo, "kb-docs/src/prd.md"))).toBe(true)
     expect(fs.existsSync(path.join(appRepo, "graphify-out/cache"))).toBe(false)
     expect(fs.existsSync(path.join(appRepo, "graphify-out/converted"))).toBe(false)
+    expect(fs.existsSync(path.join(appRepo, "graphify-out/2026-07-15"))).toBe(false)
     expect(fs.existsSync(path.join(appRepo, "graphify-out/old-file.json"))).toBe(false)
     expect(fs.readFileSync(path.join(appRepo, "src/app.ts"), "utf8")).toBe("code") // untouched
   })

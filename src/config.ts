@@ -22,6 +22,10 @@ export type Config = {
   litellmKey?: string
   litellmBaseUrl: string
   graphifyBin: string
+  /** graphify --backend value; "openai" reaches any OpenAI-compatible proxy (LiteLLM, vLLM, …). */
+  graphifyBackend: string
+  /** Model name the backend should use (e.g. "minimax/MiniMax-M2.5" on LiteLLM). */
+  graphifyModel?: string
 }
 
 export function loadConfig(
@@ -87,6 +91,8 @@ export function loadConfig(
     litellmKey: env.LITELLM_SERVICE_ACCOUNT_KEY?.trim() || undefined,
     litellmBaseUrl: env.LITELLM_BASE_URL?.trim() || "https://litellm.hhstaging.dev/v1",
     graphifyBin: env.GRAPHIFY_BIN?.trim() || "graphify",
+    graphifyBackend: env.GRAPHIFY_BACKEND?.trim() || "openai",
+    graphifyModel: env.GRAPHIFY_MODEL?.trim() || undefined,
   }
 
   if (errors.length > 0) {

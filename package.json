@@ -1,6 +1,6 @@
 {
   "name": "lorebot",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Your team's lore, on demand. A Slack bot that answers questions from your markdown knowledge base, powered by OpenCode.",
   "type": "module",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "sync": "bun run src/sync/cli.ts",
-    "test": "bun test",
+    "test": "bun test test/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -62,6 +62,8 @@ export type SyncConfig = {
   pushMode: "direct" | "pr"
   /** Which KB paths count as "the PRD docs" copied into app repos. */
   kbPaths: string[]
+  /** rsync exclude patterns applied to both app and KB mirrors (e.g. "*.png"). */
+  excludePatterns: string[]
   /** Append " [skip ci]" to sync commits. */
   skipCi: boolean
   /** Build everything but log the would-be diff instead of pushing. */
@@ -103,6 +105,7 @@ export const DEFAULT_BOT_CONFIG: BotConfig = Object.freeze({
     intervalHours: 24,
     pushMode: "direct",
     kbPaths: ["src/"],
+    excludePatterns: [],
     skipCi: false,
     dryRun: false,
     buildTimeoutMinutes: 60,
@@ -264,6 +267,7 @@ export function validateBotConfig(raw: unknown): { config: BotConfig; problems: 
       intervalHours: int("sync.intervalHours", sync.intervalHours, d.sync.intervalHours),
       pushMode: pushMode === "pr" ? "pr" : "direct",
       kbPaths: sync.kbPaths === undefined ? d.sync.kbPaths : dirNames("sync.kbPaths", sync.kbPaths, d.sync.kbPaths),
+      excludePatterns: strArray("sync.excludePatterns", sync.excludePatterns).filter((p) => p.trim() !== ""),
       skipCi: bool("sync.skipCi", sync.skipCi, d.sync.skipCi),
       dryRun: bool("sync.dryRun", sync.dryRun, d.sync.dryRun),
       buildTimeoutMinutes: int("sync.buildTimeoutMinutes", sync.buildTimeoutMinutes, d.sync.buildTimeoutMinutes),

@@ -9,6 +9,8 @@ export type SyncEnv = {
   litellmKey: string
   litellmBaseUrl: string
   graphifyBin: string
+  graphifyBackend: string
+  graphifyModel?: string
 }
 
 /**
@@ -44,5 +46,7 @@ export function requireSyncEnv(config: Config): SyncEnv {
     litellmKey: config.litellmKey!,
     litellmBaseUrl: config.litellmBaseUrl,
     graphifyBin: config.graphifyBin,
+    graphifyBackend: config.graphifyBackend,
+    graphifyModel: config.graphifyModel,
   }
 }

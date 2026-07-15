@@ -14,12 +14,12 @@ import type { Config } from "../config"
 import type { Logger } from "../logger"
 import {
   assembleCorpus,
-  chooseMode,
   ensureAppClone,
   mirrorToAppRepo,
+  prepareForBuild,
   readBuildInfo,
   runGraphify,
-  runGraphifyReport,
+  runGraphifyCluster,
   seedManifestFromAppRepo,
   writeBuildInfo,
 } from "./corpus"
@@ -51,7 +51,7 @@ export type SyncDeps = {
 }
 
 export const SYNC_BRANCH = "lorebot/graphify-sync"
-const LOREBOT_VERSION = "0.5.0"
+const LOREBOT_VERSION = "0.5.1"
 
 let inProcessRun = false
 
@@ -137,17 +137,12 @@ async function syncApp(context: {
     log,
   })
 
-  // Same inputs as the last successful build → nothing to do, no LLM spend.
-  // Our own sync commit moves the app HEAD, so the sha we pushed last time
-  // counts as "unchanged" too (kept locally — it can't be known at commit time).
-  const previous = readBuildInfo(corpusDir)
-  const lastPushedSha = readLastPushedSha(corpusDir)
-  if (
-    !force &&
-    previous &&
-    previous.knowledge_base_sha === kbSha &&
-    (previous.app_sha === appSha || lastPushedSha === appSha)
-  ) {
+  // Same inputs as the last SUCCESSFUL sync → nothing to do, no LLM spend.
+  // The state file is written only on terminal success (never on failure or
+  // dry runs), and our own sync commit moves the app HEAD, so the sha we
+  // pushed last time counts as "unchanged" too.
+  const state = readSyncState(corpusDir)
+  if (!force && state && state.kbSha === kbSha && (state.appSha === appSha || state.pushedSha === appSha)) {
     return { app: app.name, status: "up-to-date", kbSha, appSha }
   }
 
@@ -158,20 +153,32 @@ async function syncApp(context: {
     kbPaths: sync.kbPaths,
     docsPaths: app.docsPaths,
     excludePaths: app.excludePaths,
+    excludePatterns: sync.excludePatterns,
     log,
   })
   seedManifestFromAppRepo(repoDir, corpusDir, log)
 
+  prepareForBuild(corpusDir, force ?? false)
   await runGraphify({
     bin: deps.syncEnv.graphifyBin,
     corpusDir,
-    mode: chooseMode(corpusDir, force ?? false),
-    litellmKey: deps.syncEnv.litellmKey,
-    litellmBaseUrl: deps.syncEnv.litellmBaseUrl,
+    backend: deps.syncEnv.graphifyBackend,
+    model: deps.syncEnv.graphifyModel,
+    apiKey: deps.syncEnv.litellmKey,
+    baseUrl: deps.syncEnv.litellmBaseUrl,
     timeoutMs: sync.buildTimeoutMinutes * 60_000,
     log,
   })
-  await runGraphifyReport(deps.syncEnv.graphifyBin, corpusDir, log)
+  await runGraphifyCluster({
+    bin: deps.syncEnv.graphifyBin,
+    corpusDir,
+    backend: deps.syncEnv.graphifyBackend,
+    model: deps.syncEnv.graphifyModel,
+    apiKey: deps.syncEnv.litellmKey,
+    baseUrl: deps.syncEnv.litellmBaseUrl,
+    timeoutMs: sync.buildTimeoutMinutes * 60_000,
+    log,
+  })
   writeBuildInfo(corpusDir, {
     knowledge_base_sha: kbSha,
     app_sha: appSha,
@@ -185,14 +192,16 @@ async function syncApp(context: {
   const inRepo = (args: string[], redact = false) =>
     git(["-C", repoDir, ...args], redact ? { redact: redactSecrets } : {})
 
-  await inRepo(["add", "-A", "kb-docs", "graphify-out"])
+  // -f: the synced trees are lorebot-managed regardless of what the app
+  // repo's own .gitignore says about them (hh-server ignores graphify-out).
+  await inRepo(["add", "-A", "-f", "kb-docs", "graphify-out"])
   const stagedFiles = (await inRepo(["diff", "--cached", "--name-only"])).split("\n").filter(Boolean)
   const onlyBuildInfo = stagedFiles.every((file) => file === "graphify-out/BUILD_INFO.json")
   if (stagedFiles.length === 0 || onlyBuildInfo) {
     // A BUILD_INFO-only diff means nothing about the graph changed — pushing
     // just the timestamp would loop the pipeline forever.
     if (stagedFiles.length > 0) await inRepo(["reset", "--hard", "HEAD"])
-    writeLastPushedSha(corpusDir, appSha)
+    writeSyncState(corpusDir, { kbSha, appSha })
     return { app: app.name, status: "no-changes", kbSha, appSha }
   }
 
@@ -226,6 +235,7 @@ async function syncApp(context: {
       token: pushToken,
     })
     log.info(pr.created ? "pull request opened" : "pull request updated", { url: pr.url })
+    writeSyncState(corpusDir, { kbSha, appSha })
     return { app: app.name, status: "pr-updated", kbSha, appSha, prUrl: pr.url }
   }
 
@@ -240,7 +250,7 @@ async function syncApp(context: {
     const retryToken = await tokens.getToken()
     await ensureAppClone({ repoDir, repo: app.repo, branch: app.branch, remoteUrl: remoteUrl(app.repo, retryToken), log })
     await mirrorToAppRepo({ corpusDir, appRepoDir: repoDir })
-    await inRepo(["add", "-A", "kb-docs", "graphify-out"])
+    await inRepo(["add", "-A", "-f", "kb-docs", "graphify-out"])
     const retryStaged = await tryGit(["-C", repoDir, "diff", "--cached", "--quiet"])
     if (retryStaged !== undefined) {
       return { app: app.name, status: "no-changes", kbSha, appSha }
@@ -256,27 +266,33 @@ async function syncApp(context: {
     ])
     await inRepo(["push", remoteUrl(app.repo, retryToken), `HEAD:${branch}`], true)
   }
-  writeLastPushedSha(corpusDir, await inRepo(["rev-parse", "HEAD"]))
+  writeSyncState(corpusDir, { kbSha, appSha, pushedSha: await inRepo(["rev-parse", "HEAD"]) })
   return { app: app.name, status: "pushed", kbSha, appSha }
 }
 
-// The sha of our own last sync commit, kept out of the repo (it can only be
-// known after committing, and the committed BUILD_INFO must stay input-based).
-function lastPushPath(corpusDir: string): string {
-  return path.join(corpusDir, ".last-push.json")
+/**
+ * Terminal-success record for the up-to-date short-circuit. Kept out of the
+ * repo (pushedSha is only knowable after committing, and the committed
+ * BUILD_INFO must stay input-based). Never written on failure or dry runs —
+ * a failed run must retry, and a dry run must not suppress a later real one.
+ */
+type SyncState = { kbSha: string; appSha: string; pushedSha?: string }
+
+function syncStatePath(corpusDir: string): string {
+  return path.join(corpusDir, ".last-sync.json")
 }
 
-function readLastPushedSha(corpusDir: string): string | undefined {
+function readSyncState(corpusDir: string): SyncState | undefined {
   try {
-    return (JSON.parse(fs.readFileSync(lastPushPath(corpusDir), "utf8")) as { sha: string }).sha
+    return JSON.parse(fs.readFileSync(syncStatePath(corpusDir), "utf8")) as SyncState
   } catch {
     return undefined
   }
 }
 
-function writeLastPushedSha(corpusDir: string, sha: string): void {
+function writeSyncState(corpusDir: string, state: SyncState): void {
   fs.mkdirSync(corpusDir, { recursive: true })
-  fs.writeFileSync(lastPushPath(corpusDir), JSON.stringify({ sha }))
+  fs.writeFileSync(syncStatePath(corpusDir), JSON.stringify(state))
 }
 
 // --- cross-process lock ----------------------------------------------------

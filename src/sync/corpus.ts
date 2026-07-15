@@ -81,12 +81,26 @@ export async function assembleCorpus(options: {
   kbPaths: string[]
   docsPaths?: string[]
   excludePaths?: string[]
+  /** rsync patterns excluded from BOTH mirrors (e.g. "*.png" to skip images). */
+  excludePatterns?: string[]
   log: Logger
 }): Promise<void> {
-  const { corpusDir, appRepoDir, kbDir, kbPaths, docsPaths, excludePaths, log } = options
+  const { corpusDir, appRepoDir, kbDir, kbPaths, docsPaths, excludePaths, excludePatterns, log } = options
   fs.mkdirSync(corpusDir, { recursive: true })
 
-  const layout = JSON.stringify({ kbPaths, docsPaths: docsPaths ?? null, excludePaths: excludePaths ?? null })
+  // graphify's file discovery is git-aware: without its own repo boundary, a
+  // parent repo's .gitignore (lorebot ignores data/) makes it skip the whole
+  // corpus. An empty git repo shields it; nothing is ever committed here.
+  if (!fs.existsSync(path.join(corpusDir, ".git"))) {
+    await run(["git", "init", "-q", corpusDir])
+  }
+
+  const layout = JSON.stringify({
+    kbPaths,
+    docsPaths: docsPaths ?? null,
+    excludePaths: excludePaths ?? null,
+    excludePatterns: excludePatterns ?? null,
+  })
   const markerPath = path.join(corpusDir, LAYOUT_MARKER)
   const previousLayout = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, "utf8") : undefined
   if (previousLayout !== undefined && previousLayout !== layout) {
@@ -95,7 +109,10 @@ export async function assembleCorpus(options: {
     fs.mkdirSync(corpusDir, { recursive: true })
   }
 
-  const excludes = [...DEFAULT_EXCLUDES, ...(excludePaths ?? [])].flatMap((entry) => ["--exclude", entry])
+  const patternExcludes = (excludePatterns ?? []).flatMap((entry) => ["--exclude", entry])
+  const excludes = [...DEFAULT_EXCLUDES, ...(excludePaths ?? [])]
+    .flatMap((entry) => ["--exclude", entry])
+    .concat(patternExcludes)
 
   if (docsPaths && docsPaths.length > 0) {
     // --relative with the /./ pivot keeps each docsPath's structure at the corpus root.
@@ -122,6 +139,7 @@ export async function assembleCorpus(options: {
       ".opencode/",
       "--exclude",
       "graphify-out/",
+      ...patternExcludes,
       `${source}/`,
       `${target}/`,
     ])
@@ -139,18 +157,17 @@ async function rsync(args: string[]): Promise<void> {
   }
 }
 
-/** Incremental update only when graphify's own state files survive from a previous run. */
-export function chooseMode(corpusDir: string, force: boolean): "extract" | "update" {
+/**
+ * graphify extract is incremental by itself: unchanged files are served from
+ * graphify-out/cache/ without LLM calls. A forced build wipes that state so
+ * everything re-extracts from scratch.
+ */
+export function prepareForBuild(corpusDir: string, force: boolean): void {
+  if (!force) return
   const outputDir = path.join(corpusDir, OUTPUT_DIR)
-  if (force) {
-    for (const stale of ["manifest.json", ".graphify_labels.json", "cache"]) {
-      fs.rmSync(path.join(outputDir, stale), { recursive: true, force: true })
-    }
-    return "extract"
+  for (const stale of ["manifest.json", ".graphify_labels.json", "cache"]) {
+    fs.rmSync(path.join(outputDir, stale), { recursive: true, force: true })
   }
-  const hasState =
-    fs.existsSync(path.join(outputDir, "manifest.json")) && fs.existsSync(path.join(outputDir, ".graphify_labels.json"))
-  return hasState ? "update" : "extract"
 }
 
 /**
@@ -163,11 +180,11 @@ export function seedManifestFromAppRepo(appRepoDir: string, corpusDir: string, l
   if (fs.existsSync(path.join(outputDir, "manifest.json"))) return false
   const committed = path.join(appRepoDir, OUTPUT_DIR)
   const manifest = path.join(committed, "manifest.json")
-  const labels = path.join(committed, ".graphify_labels.json")
-  if (!fs.existsSync(manifest) || !fs.existsSync(labels)) return false
+  if (!fs.existsSync(manifest)) return false
   fs.mkdirSync(outputDir, { recursive: true })
   fs.copyFileSync(manifest, path.join(outputDir, "manifest.json"))
-  fs.copyFileSync(labels, path.join(outputDir, ".graphify_labels.json"))
+  const labels = path.join(committed, ".graphify_labels.json")
+  if (fs.existsSync(labels)) fs.copyFileSync(labels, path.join(outputDir, ".graphify_labels.json"))
   log.info("seeded graphify manifest from the app repo's committed graph")
   return true
 }
@@ -175,39 +192,66 @@ export function seedManifestFromAppRepo(appRepoDir: string, corpusDir: string, l
 export async function runGraphify(options: {
   bin: string
   corpusDir: string
-  mode: "extract" | "update"
-  litellmKey: string
-  litellmBaseUrl: string
+  backend: string
+  model?: string
+  apiKey: string
+  baseUrl: string
   timeoutMs: number
   log: Logger
 }): Promise<{ durationMs: number }> {
   const startedAt = Date.now()
-  options.log.info("graphify build starting", { mode: options.mode })
-  const result = await run([options.bin, options.mode, ".", "--output", `${OUTPUT_DIR}/`], {
+  options.log.info("graphify build starting", { backend: options.backend, model: options.model })
+  // The "openai" backend reaches any OpenAI-compatible server (LiteLLM, vLLM)
+  // through the OPENAI_* variables; other backends read their native env vars
+  // from the process environment.
+  const env: Record<string, string> = { CI: "true" }
+  if (options.backend === "openai") {
+    env.OPENAI_API_KEY = options.apiKey
+    env.OPENAI_BASE_URL = options.baseUrl
+    if (options.model) env.OPENAI_MODEL = options.model
+  }
+  const args = [options.bin, "extract", ".", "--output", `${OUTPUT_DIR}/`, `--backend`, options.backend]
+  if (options.model) args.push("--model", options.model)
+  const result = await run(args, {
     cwd: options.corpusDir,
     timeoutMs: options.timeoutMs,
-    env: {
-      LITELLM_SERVICE_ACCOUNT_KEY: options.litellmKey,
-      LITELLM_BASE_URL: options.litellmBaseUrl,
-      CI: "true",
-    },
+    env,
   })
   if (result.exitCode !== 0) {
-    throw new Error(`graphify ${options.mode} failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 500)}`)
+    throw new Error(`graphify extract failed (exit ${result.exitCode}): ${result.stderr.trim().slice(0, 500)}`)
   }
   const durationMs = Date.now() - startedAt
-  options.log.info("graphify build finished", { mode: options.mode, durationMs })
+  options.log.info("graphify build finished", { durationMs })
   return { durationMs }
 }
 
-/** The report is a nice-to-have; failures are logged, never thrown. */
-export async function runGraphifyReport(bin: string, corpusDir: string, log: Logger): Promise<void> {
-  const result = await run(
-    [bin, "report", `${OUTPUT_DIR}/graph.json`, "--output", `${OUTPUT_DIR}/GRAPH_REPORT.md`],
-    { cwd: corpusDir },
-  ).catch((error) => ({ exitCode: -1, stdout: "", stderr: String(error) }))
+/**
+ * Cluster + label communities and regenerate GRAPH_REPORT.md. Community
+ * naming calls the LLM. Nice-to-have: failures are logged, never thrown.
+ */
+export async function runGraphifyCluster(options: {
+  bin: string
+  corpusDir: string
+  backend: string
+  model?: string
+  apiKey: string
+  baseUrl: string
+  timeoutMs: number
+  log: Logger
+}): Promise<void> {
+  const env: Record<string, string> = { CI: "true" }
+  if (options.backend === "openai") {
+    env.OPENAI_API_KEY = options.apiKey
+    env.OPENAI_BASE_URL = options.baseUrl
+    if (options.model) env.OPENAI_MODEL = options.model
+  }
+  const result = await run([options.bin, "cluster-only", ".", "--no-viz", "--backend", options.backend], {
+    cwd: options.corpusDir,
+    timeoutMs: options.timeoutMs,
+    env,
+  }).catch((error) => ({ exitCode: -1, stdout: "", stderr: String(error) }))
   if (result.exitCode !== 0) {
-    log.warn("graphify report failed (non-fatal)", { stderr: result.stderr.trim().slice(0, 200) })
+    options.log.warn("graphify cluster/report failed (non-fatal)", { stderr: result.stderr.trim().slice(0, 200) })
   }
 }
 
@@ -242,6 +286,10 @@ export async function mirrorToAppRepo(options: { corpusDir: string; appRepoDir: 
     "cache/",
     "--exclude",
     "converted/",
+    // graphify cluster-only writes dated backup dirs (2026-07-15/) beside the
+    // graph; they're local history, not content for the app repo.
+    "--exclude",
+    "20??-??-??/",
     `${path.join(options.corpusDir, OUTPUT_DIR)}/`,
     `${path.join(options.appRepoDir, OUTPUT_DIR)}/`,
   ])

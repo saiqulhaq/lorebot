@@ -91,7 +91,7 @@ describe("local config override", () => {
 
 describe("loadBotConfig", () => {
   test("missing file falls back to defaults silently", () => {
-    const { config, problems } = loadBotConfig("/nonexistent/lorebot.config.json")
+    const { config, problems } = loadBotConfig("/nonexistent/lorebot.config.json", "/nonexistent/local.json")
     expect(problems).toEqual([])
     expect(config).toEqual(DEFAULT_BOT_CONFIG)
   })
@@ -175,6 +175,7 @@ describe("sync section validation", () => {
       intervalHours: 24,
       pushMode: "direct",
       kbPaths: ["src/"],
+      excludePatterns: [],
       skipCi: false,
       dryRun: false,
       buildTimeoutMinutes: 60,
@@ -238,9 +239,14 @@ describe("watchBotConfig", () => {
     fs.writeFileSync(file, JSON.stringify({ agent: { name: "before" } }))
 
     let seen: string | undefined
-    const stop = watchBotConfig(file, silentLog, (loaded) => {
-      seen = loaded.config.agent.name
-    })
+    const stop = watchBotConfig(
+      file,
+      silentLog,
+      (loaded) => {
+        seen = loaded.config.agent.name
+      },
+      path.join(dir, "lorebot.config.local.json"),
+    )
 
     fs.writeFileSync(file, JSON.stringify({ agent: { name: "after" } }))
     const deadline = Date.now() + 3000

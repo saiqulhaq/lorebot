@@ -9,8 +9,8 @@ set -e
 mode="$1"
 
 [ -n "$GRAPHIFY_FAKE_LOG" ] && echo "$mode $(pwd)" >> "$GRAPHIFY_FAKE_LOG"
-[ -n "$GRAPHIFY_FAKE_DUMP_ENV" ] && printf 'CI=%s\nLITELLM_SERVICE_ACCOUNT_KEY=%s\nLITELLM_BASE_URL=%s\n' \
-  "$CI" "$LITELLM_SERVICE_ACCOUNT_KEY" "$LITELLM_BASE_URL" > "$GRAPHIFY_FAKE_DUMP_ENV"
+[ -n "$GRAPHIFY_FAKE_DUMP_ENV" ] && printf 'CI=%s\nOPENAI_API_KEY=%s\nOPENAI_BASE_URL=%s\nOPENAI_MODEL=%s\nARGS=%s\n' \
+  "$CI" "$OPENAI_API_KEY" "$OPENAI_BASE_URL" "$OPENAI_MODEL" "$*" > "$GRAPHIFY_FAKE_DUMP_ENV"
 [ -n "$GRAPHIFY_FAKE_SLEEP" ] && exec sleep "$GRAPHIFY_FAKE_SLEEP"
 [ -n "$GRAPHIFY_FAKE_FAIL" ] && exit 1
 
@@ -41,13 +41,10 @@ EOF
     echo junk > "$out/cache/junk"
     echo junk > "$out/converted/junk"
     ;;
-  report)
-    out=""
-    while [ $# -gt 0 ]; do
-      if [ "$1" = "--output" ]; then out="$2"; shift; fi
-      shift
-    done
-    echo "# Fake report" > "$out"
+  cluster-only)
+    mkdir -p graphify-out
+    echo "# Fake report" > graphify-out/GRAPH_REPORT.md
+    echo '{}' > graphify-out/.graphify_labels.json
     ;;
   *)
     echo "unknown mode: $mode" >&2

@@ -69,6 +69,7 @@ function makeDeps(kbDir: string, bareByRepo: Record<string, string>): SyncDeps {
       litellmKey: "sk-test",
       litellmBaseUrl: "https://llm.example/v1",
       graphifyBin: FAKE_GRAPHIFY,
+      graphifyBackend: "openai",
     },
     kbDir,
     log,
@@ -84,6 +85,7 @@ function syncConfig(overrides: Partial<SyncConfig> = {}): SyncConfig {
     intervalHours: 24,
     pushMode: "direct",
     kbPaths: ["src/"],
+    excludePatterns: [],
     skipCi: false,
     dryRun: false,
     buildTimeoutMinutes: 1,
@@ -127,6 +129,38 @@ describe("runSyncOnce", () => {
     await sh(["git", ...GIT_ID, "-C", kb, "add", "-A"])
     await sh(["git", ...GIT_ID, "-C", kb, "commit", "-m", "more"])
     expect((await runSyncOnce(deps, syncConfig()))[0]!.status).toBe("pushed")
+  })
+
+  test("pushes even when the app repo's own .gitignore ignores graphify-out", async () => {
+    const kb = await makeKbRepo()
+    const { bare } = await makeBareRepo({ "README.md": "x", ".gitignore": "graphify-out\nkb-docs\n" })
+    const deps = makeDeps(kb, { "org/app1": bare })
+
+    const results = await runSyncOnce(deps, syncConfig())
+    expect(results[0]!.status).toBe("pushed")
+
+    const check = path.join(tempDir(), "check-ignored")
+    await sh(["git", "clone", bare, check])
+    expect(fs.existsSync(path.join(check, "graphify-out/graph.json"))).toBe(true)
+    expect(fs.existsSync(path.join(check, "kb-docs/src/prd.md"))).toBe(true)
+  })
+
+  test("a failed run does not suppress the retry (no premature up-to-date)", async () => {
+    const kb = await makeKbRepo()
+    const { bare } = await makeBareRepo({ "README.md": "x" })
+    const deps = makeDeps(kb, { "org/app1": bare })
+
+    process.env.GRAPHIFY_FAKE_FAIL = "1"
+    try {
+      const failed = await runSyncOnce(deps, syncConfig())
+      expect(failed[0]!.status).toBe("failed")
+    } finally {
+      delete process.env.GRAPHIFY_FAKE_FAIL
+    }
+
+    // The retry must actually run (not short-circuit as up-to-date) and push.
+    const retry = await runSyncOnce(deps, syncConfig())
+    expect(retry[0]!.status).toBe("pushed")
   })
 
   test("dry run leaves the remote untouched", async () => {
@@ -175,13 +209,16 @@ describe("runSyncOnce", () => {
     const deps = makeDeps(kb, { "org/app1": bare })
     await runSyncOnce(deps, syncConfig())
 
-    // Someone else pushes to the app repo.
+    // Someone else pushes to the app repo, and the KB changes too.
     const work = path.join(tempDir(), "foreign")
     await sh(["git", "clone", bare, work])
     fs.writeFileSync(path.join(work, "README.md"), "v2")
     await sh(["git", ...GIT_ID, "-C", work, "add", "-A"])
     await sh(["git", ...GIT_ID, "-C", work, "commit", "-m", "foreign change"])
     await sh(["git", "-C", work, "push"])
+    fs.writeFileSync(path.join(kb, "src", "extra.md"), "extra doc")
+    await sh(["git", ...GIT_ID, "-C", kb, "add", "-A"])
+    await sh(["git", ...GIT_ID, "-C", kb, "commit", "-m", "kb change"])
 
     const results = await runSyncOnce(deps, syncConfig())
     expect(results[0]!.status).toBe("pushed")
