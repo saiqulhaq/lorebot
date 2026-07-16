@@ -1,9 +1,9 @@
 ---
 title: "Graphify Sync"
-description: "Push merged knowledge graphs + PRD copies into every app repo."
+description: "How lorebot builds merged knowledge graphs and pushes them into your app repos."
 ---
 
-Beyond answering in Slack, lorebot can act as a **knowledge sync orchestrator**: it builds a merged [Graphify](https://graphify.net) knowledge graph (your KB's PRD docs + each app's own docs) and pushes it — together with copies of the KB docs — into every configured app repository. Developers' AI coding agents then have the full graph *and* the PRD text available locally, right in the repo they're working on.
+Beyond answering in Slack, lorebot can act as a **knowledge sync orchestrator**: it builds a merged [Graphify](https://graphify.net) knowledge graph (your KB's PRD docs + each app's own docs and code) and pushes it — together with copies of the KB docs — into every configured app repository. Developers' AI coding agents then have the full graph *and* the PRD text available locally, right in the repo they're working on.
 
 ```text
 ┌────────────────┐  reads PRDs   ┌─────────┐  merged graph + kb-docs  ┌───────────┐
@@ -14,26 +14,82 @@ Beyond answering in Slack, lorebot can act as a **knowledge sync orchestrator**:
                                                               developer's AI agent
 ```
 
-## What gets pushed into each app repo
+## Where it lives in the codebase
 
-- **`graphify-out/`** — the merged graph (`graph.json`, `manifest.json`, `GRAPH_REPORT.md`, `BUILD_INFO.json` provenance). Every `source_file` in the graph resolves inside the repo.
-- **`kb-docs/`** — copies of the KB's PRD docs, so graph nodes pointing at KB content are readable locally.
+Sync is **not a separate package** — it's an isolated subsystem inside lorebot at `src/sync/` (six modules, still zero new npm dependencies). The Slack Q&A core is untouched by design:
 
-The app's own files are never touched. Commits arrive as `lorebot[bot]` with the message `ci(graphify): rebuild graph from knowledge-base@<sha>`.
+| Module | Responsibility |
+|---|---|
+| `src/sync/orchestrator.ts` | The per-app pipeline, cross-process lock, result statuses, in-process scheduler |
+| `src/sync/corpus.ts` | Corpus assembly (rsync), graphify invocation, mirroring back into the app clone |
+| `src/sync/github-app.ts` | GitHub App auth: RS256 JWT → installation token (via `node:crypto`), token cache, PR creation, secret redaction |
+| `src/sync/git.ts` | Process helpers with timeouts and redaction |
+| `src/sync/env.ts` | Credential resolution — collected errors, enforced only when sync actually runs |
+| `src/sync/cli.ts` | The `bun run sync` entry point (no Slack required) |
+
+Integration points with the core are deliberately thin: a `sync` section in `lorebot.config.json` (validated like every other section), optional env vars in `src/config.ts`, and ~20 lines in `src/index.ts` that start/stop the scheduler on config reload. **A sync failure can never crash the Slack bot** — missing credentials just log an error and disable the scheduler, and each app build runs inside its own try/catch.
+
+## The pipeline, step by step
+
+For each app in `sync.apps`, one run does:
+
+<Steps>
+  <Step title="Clone or reset the app repo">
+    `DATA_DIR/sync/apps/<name>/repo/` — shallow clone on first run, then `fetch` + `reset --hard FETCH_HEAD` + `clean -fd` every run. The GitHub App token travels only in command arguments; the stored remote is tokenless. This also self-heals from any previously failed run or foreign force-push.
+  </Step>
+  <Step title="Short-circuit if nothing changed">
+    A local `.last-sync.json` records the KB and app shas of the last **successful** sync (never written on failure or dry runs). If both match — counting lorebot's own last push as "unchanged" — the run ends as `up-to-date` with zero LLM spend.
+  </Step>
+  <Step title="Assemble the corpus">
+    `DATA_DIR/sync/apps/<name>/corpus/` mirrors the **app repo's own layout**: app files at the root (whole repo, or `docsPaths` subset), KB docs under `kb-docs/`. rsync `--delete` propagates deletions; `excludePaths` and `excludePatterns` filter noise (e.g. `*.png`). The corpus is git-init'ed as its own empty repo — graphify's file discovery is git-aware, and without this boundary a parent repo's `.gitignore` would silently hide the whole corpus.
+  </Step>
+  <Step title="Build the graph">
+    `graphify extract . --output graphify-out/ --backend <backend>` runs **in the corpus**, so every `source_file` in the graph is a path that resolves inside the app repo after push — app paths at the root, PRDs under `kb-docs/`. Extraction is incremental: unchanged files are served from `graphify-out/cache/` without LLM calls, and the corpus (with its cache) persists between runs. Code files are extracted locally via AST at no LLM cost.
+  </Step>
+  <Step title="Cluster, label, report">
+    `graphify cluster-only . --no-viz` groups the graph into communities, names them with the LLM, and writes `GRAPH_REPORT.md`. This step is non-fatal — if the LLM is unreachable, communities keep placeholder names (repairable later with `graphify label --missing-only`) and the sync continues.
+  </Step>
+  <Step title="Stamp provenance">
+    `BUILD_INFO.json` records the exact KB and app shas plus a timestamp, so anyone reading the app repo knows which docs version produced the graph.
+  </Step>
+  <Step title="Mirror into the app clone">
+    Only two trees are written: `kb-docs/` and `graphify-out/` (minus graphify's local-only `cache/`, `converted/`, and dated backup dirs). The app's own files are never touched.
+  </Step>
+  <Step title="Commit and deliver">
+    `git add -f` stages the two trees — force-added, so an app repo's own `.gitignore` entries can't block the sync. A diff that only changes the `BUILD_INFO.json` timestamp counts as `no-changes` and is discarded (otherwise every run would push forever). Otherwise lorebot commits as `lorebot[bot]` with `ci(graphify): rebuild graph from knowledge-base@<sha>` and either pushes to the branch directly, force-pushes `lorebot/graphify-sync` + opens/updates a PR, or — in dry-run mode — logs the diffstat and resets.
+  </Step>
+</Steps>
+
+Every app gets one of these terminal statuses per run, logged in a summary line: `pushed`, `pr-updated`, `no-changes`, `up-to-date`, `dry-run`, `failed`, or `skipped`. Failures are isolated — app 2 still syncs if app 1 fails.
+
+## What lands in each app repo
+
+- **`graphify-out/`** — the merged graph: `graph.json` (nodes: code entities, doc sections, concepts; links: `references`, `implements`, `conceptually_related_to`, …), `manifest.json`, `GRAPH_REPORT.md`, `.graphify_labels.json`, `BUILD_INFO.json`
+- **`kb-docs/`** — copies of the KB's PRD docs, so graph nodes pointing at KB content are readable in-repo
+
+A developer's AI agent inside the app repo can then hop: *code entity → implementation doc → the PRD requirement behind it* — and actually read every file the graph cites.
+
+## Safety and cost properties
+
+- **One build at a time**: graphify's cache is not concurrency-safe, so apps build sequentially, and a `DATA_DIR/sync/.lock` file (with stale-holder detection) keeps the scheduler and a concurrent `bun run sync` from colliding.
+- **Crash-safe state**: success state is written only at terminal success. A failed run retries fully; a dry run never suppresses a later real push.
+- **LLM spend is bounded**: full extraction is paid once per corpus; after that only changed files hit the LLM, unchanged-input runs cost nothing, and `--force` is the only way to re-extract everything.
+- **Secrets hygiene**: installation tokens live ~1 hour, are cached and auto-refreshed, passed only as git arguments (never written to `.git/config`), and scrubbed from every error message before logging.
 
 ## One-time setup
 
 <Steps>
   <Step title="Create a GitHub App">
-    In your org: Settings → Developer settings → GitHub Apps → New. Permissions:
-    **Contents: Read & write**, Metadata: Read. Add **Pull requests: Read & write**
-    if you plan to use `pushMode: "pr"`. No webhooks needed. Install it on the
-    app repositories you want synced, note the **App ID** and **Installation ID**,
-    and generate a **private key** (.pem).
+    In your org: Settings → Developer settings → GitHub Apps → New (or use
+    [cased/skyline](https://github.com/cased/skyline) to automate the manifest flow).
+    Permissions: **Contents: Read & write**, Metadata: Read; add **Pull requests:
+    Read & write** for `pushMode: "pr"`. No webhooks. Install it on the target
+    repos — or org-wide with "All repositories" — and note the **App ID**,
+    **Installation ID**, and generate a **private key** (.pem).
   </Step>
   <Step title="Install graphify + rsync on the host">
     ```sh
-    uv tool install graphifyy   # or: pipx install graphifyy
+    uv tool install "graphifyy[openai]"   # the extra matters: the openai backend needs it
     graphify --version
     ```
     `rsync` and `git` must also be on PATH.
@@ -43,25 +99,24 @@ The app's own files are never touched. Commits arrive as `lorebot[bot]` with the
     GITHUB_APP_ID=123456
     GITHUB_APP_INSTALLATION_ID=7890123
     GITHUB_APP_PRIVATE_KEY_FILE=/etc/lorebot/github-app.pem
-    LITELLM_SERVICE_ACCOUNT_KEY=sk-...   # graph builds call an LLM
-    #LITELLM_BASE_URL=https://litellm.hhstaging.dev/v1
-    #GRAPHIFY_BIN=graphify
+    LITELLM_SERVICE_ACCOUNT_KEY=sk-...        # LLM key for graph builds
+    LITELLM_BASE_URL=https://your-proxy/v1    # any OpenAI-compatible endpoint
+    GRAPHIFY_BACKEND=openai                   # default; gemini|kimi|claude|... also work
+    GRAPHIFY_MODEL=minimax/MiniMax-M2.5       # the model your proxy serves
     ```
   </Step>
   <Step title="Configure the apps">
-    In `lorebot.config.json`:
+    Use `lorebot.config.local.json` (gitignored) so company specifics stay out of your clone:
     ```json
-    "sync": {
-      "enabled": false,
-      "apps": [
-        { "name": "hh-server", "repo": "hungryhub-team/hh-server", "docsPaths": ["docs/"] }
-      ],
-      "intervalHours": 24,
-      "pushMode": "direct",
-      "kbPaths": ["src/"],
-      "skipCi": false,
-      "dryRun": true,
-      "buildTimeoutMinutes": 60
+    {
+      "sync": {
+        "enabled": false,
+        "dryRun": true,
+        "pushMode": "pr",
+        "kbPaths": ["src/"],
+        "excludePatterns": ["*.png", "*.jpg", "*.svg"],
+        "apps": [{ "name": "hh-server", "repo": "hungryhub-team/hh-server" }]
+      }
     }
     ```
   </Step>
@@ -75,14 +130,17 @@ The app's own files are never touched. Commits arrive as `lorebot[bot]` with the
 | `sync.apps[].name` | — | Slug; becomes `DATA_DIR/sync/apps/<name>` |
 | `sync.apps[].repo` | — | `org/name` on github.com |
 | `sync.apps[].branch` | remote HEAD | Target branch |
-| `sync.apps[].docsPaths` | whole repo | Narrow the corpus to specific paths (e.g. docs-only) |
-| `sync.apps[].excludePaths` | — | Extra rsync excludes on top of the defaults (`.git`, `node_modules`, …) |
+| `sync.apps[].docsPaths` | whole repo | Narrow the corpus (e.g. docs-only); omit to graph the code too |
+| `sync.apps[].excludePaths` | — | Extra rsync excludes for this app, on top of defaults (`.git`, `node_modules`, …) |
 | `sync.intervalHours` | `24` | Scheduler cadence |
 | `sync.pushMode` | `"direct"` | `"pr"` force-pushes `lorebot/graphify-sync` and opens/updates a PR |
 | `sync.kbPaths` | `["src/"]` | Which KB paths are the PRD docs copied into apps |
+| `sync.excludePatterns` | `[]` | rsync patterns filtered from **both** mirrors (e.g. `"*.png"` to skip images) |
 | `sync.skipCi` | `false` | Append ` [skip ci]` so sync commits don't trigger the app's CI |
 | `sync.dryRun` | `false` | Build everything, log the would-be diffstat, push nothing |
 | `sync.buildTimeoutMinutes` | `60` | Kill a graphify build that runs longer |
+
+Changing `kbPaths`, `docsPaths`, `excludePaths`, or `excludePatterns` invalidates the corpus layout — the next run wipes it and does one full re-extract (this is detected via a layout marker file, and it's deliberate: the graph must match the corpus).
 
 ## Running it
 
@@ -90,7 +148,7 @@ The app's own files are never touched. Commits arrive as `lorebot[bot]` with the
 bun run sync                    # all configured apps
 bun run sync --only hh-server   # subset
 bun run sync --dry-run          # never pushes
-bun run sync --force            # ignore incremental state, full re-extract (costs LLM tokens)
+bun run sync --force            # wipe incremental state, full re-extract (costs LLM tokens)
 ```
 
 The CLI is independent of the Slack bot — run it from cron if you prefer:
@@ -99,14 +157,7 @@ The CLI is independent of the Slack bot — run it from cron if you prefer:
 0 2 * * * cd /opt/lorebot && /usr/local/bin/bun run sync >> /var/log/lorebot-sync.log 2>&1
 ```
 
-Or set `sync.enabled: true` and let the running bot schedule it (`intervalHours`, plus an on-boot run when a build is missing or stale).
-
-## Cost & efficiency
-
-- Builds are **incremental**: graphify's `manifest.json` persists between runs, so only changed files spend LLM tokens. First-ever runs seed incremental state from the app repo's previously committed graph when available.
-- Runs **short-circuit** when neither the KB nor the app changed since the last build — zero LLM spend.
-- A diff that only changes the `BUILD_INFO.json` timestamp is treated as no-change and not pushed.
-- Builds run one at a time (graphify's cache is not concurrency-safe); a cross-process lock protects against the scheduler and CLI colliding.
+Or set `sync.enabled: true` and let the running bot schedule it (`intervalHours`, plus an on-boot run when a build is missing or stale). Config changes hot-reload; flipping `enabled` restarts the scheduler live.
 
 ## Rollout advice
 
@@ -119,7 +170,10 @@ Or set `sync.enabled: true` and let the running bot schedule it (`intervalHours`
 | Symptom | Fix |
 |---|---|
 | `graphify sync disabled` at boot | Missing env vars — the log lists all of them; the Slack role keeps running |
-| `graphify extract failed` | Check `LITELLM_SERVICE_ACCOUNT_KEY` / `LITELLM_BASE_URL`; run `graphify --version` on the host |
-| Build killed at the timeout | Raise `sync.buildTimeoutMinutes` — first full extracts of big corpora are slow |
+| `found 0 code, 0 docs` / empty graph | You're on an old lorebot: corpora must be their own git repos (fixed in v0.5.1) |
+| `the 'openai' package is required` | Reinstall with the extra: `uv tool install "graphifyy[openai]" --force` |
+| Chunks fail with 502/timeout | Your LLM proxy is down or overloaded — check the origin, not Cloudflare. Extraction already paid is safe in the cache; just rerun |
+| Communities named "Community N" | Labeling failed (non-fatal). Once the LLM is back: `graphify label <corpus> --missing-only --backend openai` |
 | Push rejected | The App isn't installed on that repo, or lacks Contents write |
-| Everything rebuilds after config edits | Changing `kbPaths`/`docsPaths` invalidates the incremental manifest by design — one full re-extract follows |
+| Build killed at the timeout | Raise `sync.buildTimeoutMinutes` — first full extracts of big corpora are slow |
+| Everything rebuilds after config edits | Corpus-shaping fields changed — one full re-extract follows, by design |

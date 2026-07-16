@@ -5,6 +5,10 @@ description: "What lorebot is made of — deliberately small."
 
 lorebot is **~7 source files by design**. There's no framework, no plugin system, no build step — Bun runs the TypeScript directly. This page and the next two map the codebase for contributors.
 
+## Two roles, one package
+
+lorebot ships two independent roles in a single codebase: the **Slack Q&A bot** (`src/*.ts`) and the **graphify sync orchestrator** (`src/sync/*.ts`), which builds merged knowledge graphs and pushes them into app repos. They share config loading and logging, nothing else — sync can run standalone via `bun run sync`, and a sync failure can never take down Slack answering. See [Graphify Sync](/docs/sync) for the deep dive.
+
 ## The three layers
 
 <CardGroup cols={3}>

@@ -50,6 +50,17 @@ Clones the KB repo (or uses `KB_DIR`), runs the interval `git pull --ff-only` lo
 
 Markdown → mrkdwn conversion (bold, links, headings; code preserved), citation linkification against `KB_LINK_BASE`, bullet-list truncation, sign-off, and length caps from the formatting config.
 
+## `src/sync/` — the graphify sync subsystem
+
+The [sync role](/docs/sync) is a self-contained subsystem in the same package (not a separate npm package): six modules with their own entry point, config section, and env vars, integrated with the core through ~20 lines in `index.ts`. A sync failure can never crash the Slack role.
+
+- **`orchestrator.ts`** — the per-app pipeline (clone → corpus → graphify → mirror → push/PR/dry-run), terminal statuses, the cross-process lock, the crash-safe `.last-sync.json` success state, and the in-process scheduler
+- **`corpus.ts`** — corpus assembly with rsync (app layout at root + `kb-docs/`), the git-init shield against parent `.gitignore`s, graphify `extract`/`cluster-only` invocation with timeouts, `BUILD_INFO.json` provenance, and the mirror back into the app clone
+- **`github-app.ts`** — GitHub App auth from scratch with `node:crypto`: RS256 JWT → 1-hour installation token, cached with auto-refresh, `tokenRemote()` URLs passed only as git arguments, secret redaction for all error output, PR open-or-update
+- **`git.ts`** — process helpers (`run`/`git`/`tryGit`) with timeouts and redaction hooks
+- **`env.ts`** — `requireSyncEnv()`: collected-error credential validation, enforced only when sync runs
+- **`cli.ts`** — `bun run sync [--force] [--only a,b] [--dry-run]`, usable from cron without the Slack bot
+
 ## `src/logger.ts` — logging
 
 Zero-dependency structured logger: levels, component tags, pretty or JSON output. See [Logging](/docs/logging).
