@@ -1,0 +1,157 @@
+---
+title: "Extending lorebot"
+description: "How to add a new module or subsystem — conventions and two worked examples."
+---
+
+lorebot stays small on purpose, so new code follows a few firm conventions. This page shows the rules, then walks through two real examples: a **single module** (small feature inside the Slack role) and a **subsystem** (a second role like `src/sync/`).
+
+## The rules
+
+1. **No new npm dependencies.** Bun and Node built-ins cover a lot: `bun:sqlite`, `fs.watch`, `node:crypto`, `Bun.spawn`, native `.env`. If you think you need a package, look at how `github-app.ts` does GitHub App auth with `node:crypto` + `fetch` first.
+2. **Config over code.** Anything a non-developer might want to change belongs in `lorebot.config.json`, validated in `src/botconfig.ts` with the one-pass problems pattern — every bad field reported with its exact path, defaults kept, unknown sections flagged. Secrets and connection settings go in `.env` via `src/config.ts` instead.
+3. **One file, one responsibility.** Modules export functions (or a small factory like `makeEngine`), take a `Logger` where they log, and keep pure logic separable for testing.
+4. **Fail soft.** Background work must never crash the Slack role: collect errors, log with context, return a degraded result. Look at how `startSyncLoop` logs pull failures without dying, or how `index.ts` disables sync with an error log when credentials are missing.
+5. **Hot-reload aware.** Read behavior config through the shared `BotConfigRef` (`botConfig.current.…`) at *use time*, not at construction time — that's what makes `lorebot.config.json` edits apply without restart.
+6. **Tests are offline.** `bun test` must pass with no network, no real keys, no external services. Fake external binaries with fixture shell scripts (`fixtures/bin/graphify`), fake GitHub with local bare repos, inject `fetch`/clocks as parameters.
+
+## Example 1: a module — daily question stats
+
+Say you want lorebot to count questions per channel and expose a configurable daily summary. That's one module plus three small touchpoints.
+
+### 1. The config surface
+
+Add the type and defaults in `src/botconfig.ts`:
+
+```ts
+export type BotConfig = {
+  // ...existing sections...
+  stats: {
+    enabled: boolean
+    /** Channel ID to post the daily summary into; empty = log only. */
+    summaryChannel: string
+  }
+}
+
+export const DEFAULT_BOT_CONFIG: BotConfig = Object.freeze({
+  // ...existing defaults...
+  stats: { enabled: false, summaryChannel: "" },
+})
+```
+
+Then validate it inside `validateBotConfig` — reuse the existing helpers and **add the section name to `knownSections`** (that's what powers typo detection):
+
+```ts
+const knownSections = [/* existing */, "stats"]
+// ...
+stats: {
+  enabled: bool("stats.enabled", root.stats?.enabled, d.stats.enabled),
+  summaryChannel: str("stats.summaryChannel", root.stats?.summaryChannel, d.stats.summaryChannel),
+},
+```
+
+### 2. The module
+
+`src/stats.ts` — storage piggybacks on the existing sqlite pattern from `store.ts`:
+
+```ts
+import { Database } from "bun:sqlite"
+import type { Logger } from "./logger"
+
+export class QuestionStats {
+  private db: Database
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath)
+    this.db.run(`CREATE TABLE IF NOT EXISTS question_stats (
+      day TEXT NOT NULL, channel TEXT NOT NULL, count INTEGER NOT NULL,
+      PRIMARY KEY (day, channel))`)
+  }
+
+  record(channel: string, now = new Date()): void {
+    const day = now.toISOString().slice(0, 10)
+    this.db.run(
+      `INSERT INTO question_stats (day, channel, count) VALUES (?, ?, 1)
+       ON CONFLICT (day, channel) DO UPDATE SET count = count + 1`,
+      [day, channel],
+    )
+  }
+
+  summary(day: string): Array<{ channel: string; count: number }> {
+    return this.db
+      .query<{ channel: string; count: number }, [string]>(
+        "SELECT channel, count FROM question_stats WHERE day = ? ORDER BY count DESC",
+      )
+      .all(day)
+  }
+}
+```
+
+### 3. The wiring
+
+Two lines in `src/slack.ts`'s `answer()` (gated on live config, per rule 5):
+
+```ts
+if (botConfig.current.stats.enabled) stats.record(key.channel)
+```
+
+…and construction plus an interval in `src/index.ts`, following the `startSyncLoop` pattern (in-flight guard, `timer.unref?.()`, stop function added to `shutdown`).
+
+### 4. The test
+
+`test/stats.test.ts`, temp-dir sqlite like `store.test.ts`:
+
+```ts
+test("counts per channel per day and survives reopening", () => {
+  const dbPath = tempDbPath()
+  const stats = new QuestionStats(dbPath)
+  stats.record("C1")
+  stats.record("C1")
+  stats.record("C2")
+  expect(stats.summary(today())).toEqual([
+    { channel: "C1", count: 2 },
+    { channel: "C2", count: 1 },
+  ])
+})
+```
+
+Finish by documenting the new section in `docs/docs/customization.mdx` and the README config table. That's the whole checklist: **botconfig section → module → wiring → test → docs.**
+
+## Example 2: a subsystem — a second role like `src/sync/`
+
+A subsystem is for a feature with its own lifecycle: own credentials, own scheduler, potentially its own CLI. The sync orchestrator is the template; here's the shape, using a hypothetical `digest/` (weekly email/Slack digest of KB gaps — questions the bot couldn't answer).
+
+### Layout
+
+```text
+src/digest/
+├── cli.ts            # `bun run digest` — runs without the Slack bot
+├── env.ts            # requireDigestEnv(): collected-error credential validation
+├── collector.ts      # pure logic: query unanswered questions, build the digest
+└── orchestrator.ts   # run-once pipeline + in-process scheduler
+```
+
+### The contract every subsystem follows
+
+- **`env.ts`** exports `requireXxxEnv(config): XxxEnv` that throws a `ConfigError` listing **all** missing variables at once. The env vars themselves are declared optional in `src/config.ts` — the Slack bot must boot without them.
+- **`orchestrator.ts`** exports:
+  ```ts
+  export async function runDigestOnce(deps: DigestDeps): Promise<DigestResult>
+  export function startDigestScheduler(deps: DigestDeps, botConfig: BotConfigRef): () => void
+  ```
+  `deps` carries `config`, the resolved env, and a `Logger` — plus injectable seams for tests (the sync subsystem injects `remoteUrl` and a `TokenProvider` so tests use local bare repos and fake tokens). The scheduler reads `botConfig.current.digest` at every tick so hot-reload works, and returns a stop function.
+- **`cli.ts`** loads config with the right role — `loadConfig(process.env, { role: "sync" })` skips the Slack token requirement; add your own role if needed — then exits non-zero on failure. Register it in `package.json` scripts.
+- **`index.ts` wiring** is the same ~20 lines sync uses: try `requireXxxEnv`, start the scheduler inside a try/catch that only logs on failure, restart it when a reload changes your config section, and call the stop function in `shutdown`.
+- **State on disk** goes under `DATA_DIR/<subsystem>/`. If runs must not overlap across processes, copy the lock-file pattern from `runSyncOnce` (create with `{ flag: "wx" }`, steal when the holder pid is dead).
+
+### Testing a subsystem
+
+The sync tests are the reference (`test/sync/`):
+
+- **Fake external binaries** as committed shell scripts in `fixtures/bin/` that log their argv to a file the test reads (`$GRAPHIFY_FAKE_LOG`) and toggle failure/sleep modes via env vars
+- **Fake GitHub** with `git init --bare` repos and an injected `remoteUrl: () => "file:///…"`
+- **Fake credentials** with `crypto.generateKeyPairSync` — then *verify* the JWT your code signs
+- **Fake clocks and fetch** passed as optional parameters with real defaults
+
+## Should it be a separate npm package?
+
+Almost never. The sync subsystem stayed in-repo because it shares config/logging conventions, has no independent consumer, and keeps the clone-and-run deployment story simple. Reach for a real package split only when something else needs to import your code — and even then, a subsystem directory is designed to lift out cleanly later.

@@ -38,7 +38,7 @@
       },
       {
         "tab": "Packages",
-        "pages": ["packages/overview", "packages/modules", "packages/dependencies"]
+        "pages": ["packages/overview", "packages/modules", "packages/dependencies", "packages/extending"]
       }
     ],
     "global": {
